@@ -247,7 +247,8 @@ int main(int argc, char** argv) {
                     if (!loaded)
                         world.load_chunk(cx, cz);
                     else {
-                        if (loaded->mesh)
+                        auto mesh = loaded->mesh.lock_mut();
+                        if (*mesh)
                             return;
 
                         bool all_neighbours_loaded = true;
@@ -281,13 +282,14 @@ int main(int argc, char** argv) {
 
                 for (auto chunk : world.loaded_chunks()) {
                     if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
-                        world.unload_chunk(chunk);
+                        world.unload_chunk(chunk.get());
                         continue;
                     }
 
-                    if (!chunk->mesh)
+                    auto mesh_lock = chunk->mesh.lock();
+                    if (!*mesh_lock)
                         continue;
-                    auto mesh = chunk->mesh;
+                    auto mesh = *mesh_lock;
                     if (mesh->num_verts == 0)
                         continue;
 

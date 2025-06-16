@@ -6,36 +6,49 @@ World::World(const char* filename) {
 }
 
 World::~World() {
-    regions.clear();
+    for (auto& c : loaded_chunks()) {
+        unload_chunk(c.get());
+    }
+    while (true) {
+        auto locked = regions.lock();
+        if (locked->size() == 0) {
+            break;
+        }
+        fprintf(stderr, "Some chunks are still loaded, waiting...");
+        sleep(1);
+    }
     cunk_close_mcworld(enkl_world);
 }
 
-std::vector<Chunk*> World::loaded_chunks() {
-    std::vector<Chunk*> list;
-    for (auto& [_, region] : regions) {
+std::vector<std::shared_ptr<Chunk>> World::loaded_chunks() {
+    std::vector<std::shared_ptr<Chunk>> list;
+    auto guard = regions.lock();
+    for (auto& [_, region] : *guard) {
         assert(region);
         for (auto& [_, chunk] : region->chunks) {
-            list.push_back(&*chunk);
+            list.push_back(chunk);
         }
     }
     return list;
 }
 
-Region* World::get_loaded_region(int rx, int rz) {
-    if (auto found = regions.find({ rx, rz}); found != regions.end()) {
-        return &*found->second;
+template<typename Guard>
+std::shared_ptr<Region> World::get_loaded_region(Guard& guard, int rx, int rz) {
+    if (auto found = guard->find({ rx, rz}); found != guard->end()) {
+        return found->second;
     }
     return nullptr;
 }
 
-Region* World::load_region(int rx, int rz) {
-    assert(!get_loaded_region(rx, rz));
+template<typename Guard>
+std::shared_ptr<Region> World::load_region(Guard& locked_regions, int rx, int rz) {
+    assert(!get_loaded_region(locked_regions, rx, rz));
     Int2 pos = {rx, rz};
-    auto& r = regions[pos] = std::make_unique<Region>(*this, rx, rz);
+    auto& r = (*locked_regions)[pos] = std::make_shared<Region>(*this, rx, rz);
     assert(!r->loaded);
     assert(!r->unloaded);
     r->loaded = true;
-    return &*r;
+    return r;
 }
 
 static int to_region_coordinate(int c) {
@@ -50,37 +63,38 @@ static std::tuple<int, int> to_region_coordinates(int cx, int cz) {
     return { rx, rz };
 }
 
-Chunk* World::get_loaded_chunk(int cx, int cz) {
+std::shared_ptr<Chunk> World::get_loaded_chunk(int cx, int cz) {
     auto [rx, rz] = to_region_coordinates(cx, cz);
-    auto found = get_loaded_region(rx, rz);
+    auto guard = regions.lock();
+    auto found = get_loaded_region(guard, rx, rz);
     if (found)
         return found->get_chunk(cx & 0x1f, cz & 0x1f);
     return nullptr;
 }
 
-Chunk* World::load_chunk(int cx, int cz) {
+std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
     auto [rx, rz] = to_region_coordinates(cx, cz);
-    Region* r = get_loaded_region(rx, rz);
+    auto guard = regions.lock_mut();
+    std::shared_ptr<Region> r = get_loaded_region(guard, rx, rz);
     if (!r)
-        r = load_region(rx, rz);
+        r = load_region(guard, rx, rz);
     return r->load_chunk(cx, cz);
 }
 
 void World::unload_chunk(Chunk* chunk) {
     Region* region = &chunk->region;
     region->unload_chunk(chunk);
-    if (region->chunks.size() == 0)
-        unload_region(region);
 }
 
-void World::unload_region(Region* region) {
-    assert(region->loaded);
-    assert(!region->unloaded);
-    region->unloaded = true;
+template<typename Guard>
+void World::unload_region(Guard guard, Region* region) {
+    //assert(region->loaded);
+    //assert(!region->unloaded);
+    //region->unloaded = true;
     int rx = region->rx;
     int rz = region->rz;
     Int2 pos = {rx, rz};
-    regions.erase(pos);
+    guard->erase(pos);
 }
 
 Region::Region(World& w, int rx, int rz) : world(w), rx(rx), rz(rz) {
@@ -90,28 +104,29 @@ Region::Region(World& w, int rx, int rz) : world(w), rx(rx), rz(rz) {
 
 Region::~Region() {
     //printf("~ %d %d %zu\n", rx, rz, (size_t) enkl_region);
-    chunks.clear();
+    assert(chunks.empty());
+    //chunks.clear();
     if (enkl_region)
         enkl_close_region(enkl_region);
 }
 
-Chunk* Region::get_chunk(unsigned int rcx, unsigned int rcz) {
+std::shared_ptr<Chunk> Region::get_chunk(unsigned int rcx, unsigned int rcz) {
     assert(rcx >= 0 && rcz >= 0);
     assert(rcx < 32 && rcz < 32);
     auto found = chunks.find({(int) rcx, (int) rcz});
     if (found != chunks.end())
-        return &*found->second;
+        return found->second;
     return nullptr;
 }
 
-Chunk* Region::load_chunk(int cx, int cz) {
+std::shared_ptr<Chunk> Region::load_chunk(int cx, int cz) {
     unsigned rcx = cx & 0x1f;
     unsigned rcz = cz & 0x1f;
     assert(rcx < 32 && rcz < 32);
     assert(!get_chunk(rcx, rcz));
     Int2 pos = {(int)rcx, (int)rcz};
-    auto& r = chunks[pos] = std::make_unique<Chunk>(*this, cx, cz);
-    return &*r;
+    auto& r = chunks[pos] = std::make_shared<Chunk>(*this, cx, cz);
+    return r;
 }
 
 void Region::unload_chunk(Chunk* chunk) {
@@ -131,6 +146,8 @@ Chunk::Chunk(Region& r, int cx, int cz) : region(r), cx(cx), cz(cz) {
             load_from_mcchunk(&data, enkl_chunk);
         }
     }
+    auto users = r.users.lock_mut();
+    (*users)++;
 }
 
 Chunk::~Chunk() {
@@ -138,4 +155,11 @@ Chunk::~Chunk() {
     enkl_destroy_chunk_data(&data);
     if (enkl_chunk)
         enkl_close_chunk(enkl_chunk);
+
+    World& w = region.world;
+    auto guard = w.regions.lock_mut();
+
+    auto users = region.users.lock_mut();
+    if ((*users)-- <= 0)
+        w.unload_region(std::move(guard), &region);
 }

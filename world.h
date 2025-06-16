@@ -10,6 +10,7 @@ extern "C" {
 
 #include "chunk_mesh.h"
 
+#include "rustex.h"
 #include <future>
 #include <mutex>
 
@@ -33,13 +34,15 @@ struct std::hash<Int2> {
 struct World;
 struct Region;
 
+template<typename T>
+using Mutex = rustex::mutex<T>;
+
 struct Chunk {
     Region& region;
     int cx, cz;
     McChunk* enkl_chunk = nullptr;
     ChunkData data = {};
-    std::mutex mesh_lock;
-    std::shared_ptr<ChunkMesh> mesh;
+    Mutex<std::shared_ptr<ChunkMesh>> mesh;
 
     Chunk(Region&, int x, int z);
     Chunk(const Chunk&) = delete;
@@ -52,38 +55,45 @@ struct Region {
     McRegion* enkl_region = nullptr;
     bool loaded = false;
     bool unloaded = false;
-    std::unordered_map<Int2, std::unique_ptr<Chunk>> chunks;
+    std::unordered_map<Int2, std::shared_ptr<Chunk>> chunks;
 
     Region(World&, int rx, int rz);
     Region(const Region&) = delete;
     ~Region();
 
-    Chunk* get_chunk(unsigned rcx, unsigned rcz);
 protected:
-    Chunk* load_chunk(int cx, int cz);
+    Mutex<int> users;
+
+    std::shared_ptr<Chunk> get_chunk(unsigned rcx, unsigned rcz);
+    std::shared_ptr<Chunk> load_chunk(int cx, int cz);
     void unload_chunk(Chunk*);
     friend World;
+    friend Chunk;
 };
 
 struct World {
     Enkl_Allocator allocator;
     McWorld* enkl_world;
-    std::unordered_map<Int2, std::unique_ptr<Region>> regions;
+    Mutex<std::unordered_map<Int2, std::shared_ptr<Region>>> regions;
 
     explicit World(const char*);
     World(const World&) = delete;
     ~World();
 
-    Chunk* load_chunk(int x, int y);
+    std::shared_ptr<Chunk> load_chunk(int chunk_x, int chunk_z);
     void unload_chunk(Chunk*);
-    Chunk* get_loaded_chunk(int x, int z);
-    std::vector<Chunk*> loaded_chunks();
+    std::shared_ptr<Chunk> get_loaded_chunk(int x, int z);
+    std::vector<std::shared_ptr<Chunk>> loaded_chunks();
 private:
-    Region* get_loaded_region(int rx, int rz);
-    Region* load_region(int rx, int rz);
-    void unload_region(Region*);
+    template<typename Guard>
+    std::shared_ptr<Region> get_loaded_region(Guard&, int rx, int rz);
+    template<typename Guard>
+    std::shared_ptr<Region> load_region(Guard&, int rx, int rz);
+    template<typename Guard>
+    void unload_region(Guard, Region*);
 
     friend Region;
+    friend Chunk;
 };
 
 //WorldChunk world[WORLD_SIZE][WORLD_SIZE];
