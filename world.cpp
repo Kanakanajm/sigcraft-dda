@@ -25,8 +25,10 @@ World::~World() {
 std::vector<std::shared_ptr<Chunk>> World::loaded_chunks() {
     std::vector<std::shared_ptr<Chunk>> list;
     auto guard = held_chunks.lock();
-    for (auto& c : *guard) {
-        list.push_back(c.second);
+    for (auto& handle : *guard) {
+        auto chunk_guard = handle.second->handle.lock();
+        if (*chunk_guard)
+            list.push_back(*chunk_guard);
     }
     //auto guard = regions.lock();
     //for (auto& [_, region] : *guard) {
@@ -73,8 +75,12 @@ std::shared_ptr<Chunk> World::get_loaded_chunk(int cx, int cz) {
     Int2 pos = { cx, cz };
     auto held_chunks_guard = held_chunks.lock();
     auto found = held_chunks_guard->find(pos);
-    if (found != held_chunks_guard->end())
-        return found->second;
+    if (found != held_chunks_guard->end()) {
+        auto& handle = found->second;
+        auto chunk_guard = handle->handle.lock();
+        if (*chunk_guard)
+            return *chunk_guard;
+    }
     //auto [rx, rz] = to_region_coordinates(cx, cz);
     //auto guard = regions.lock();
     //auto found = get_loaded_region(guard, rx, rz);
@@ -83,16 +89,19 @@ std::shared_ptr<Chunk> World::get_loaded_chunk(int cx, int cz) {
     return nullptr;
 }
 
-std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
+void World::load_chunk(int cx, int cz) {
     auto [rx, rz] = to_region_coordinates(cx, cz);
     auto held_guard = held_chunks.lock_mut();
-    auto regions_guard = regions.lock_mut();
-    Region* r = get_loaded_region(regions_guard, rx, rz);
-    if (!r)
-        r = load_region(regions_guard, rx, rz);
-    auto chunk = std::make_shared<Chunk>(*r, cx, cz);
-    (*held_guard)[Int2(cx, cz)] = chunk;
-    return chunk;
+    if (held_guard->find(Int2(cx, cz)) == held_guard->end()) {
+        auto handle = (*held_guard)[Int2(cx, cz)] = std::make_shared<ChunkHandle>();
+        tp.schedule([=, this] {
+            auto regions_guard = regions.lock_mut();
+            Region* r = get_loaded_region(regions_guard, rx, rz);
+            if (!r)
+                r = load_region(regions_guard, rx, rz);
+            *handle->handle.lock_mut() = std::make_shared<Chunk>(*r, cx, cz);
+        });
+    }
 }
 
 void World::unload_chunk(Chunk* chunk) {

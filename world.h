@@ -11,6 +11,7 @@ extern "C" {
 struct ChunkMesh;
 
 #include "rustex.h"
+#include "threadpool.h"
 
 #include <future>
 #include <mutex>
@@ -80,17 +81,23 @@ struct World {
     Enkl_Allocator allocator;
     McWorld* enkl_world;
     Mutex<std::unordered_map<Int2, std::unique_ptr<Region>>> regions;
-    Mutex<std::unordered_map<Int2, std::shared_ptr<Chunk>>> held_chunks;
+
+    struct ChunkHandle {
+        Mutex<std::shared_ptr<Chunk>> handle;
+    };
+    Mutex<std::unordered_map<Int2, std::shared_ptr<ChunkHandle>>> held_chunks;
 
     explicit World(const char*);
     World(const World&) = delete;
     ~World();
 
-    std::shared_ptr<Chunk> load_chunk(int chunk_x, int chunk_z);
+    void load_chunk(int chunk_x, int chunk_z);
     void unload_chunk(Chunk*);
     std::shared_ptr<Chunk> get_loaded_chunk(int x, int z);
     std::vector<std::shared_ptr<Chunk>> loaded_chunks();
 private:
+    ThreadPool tp { 1 };
+
     template<typename Guard>
     Region* get_loaded_region(Guard&, int rx, int rz);
     template<typename Guard>
