@@ -71,6 +71,7 @@ static bool cunk_decode_nbt_body(NBT_Tag tag, NBT_Body* out_body, const char* bu
                     space *= 2;
                 }
                 body.p_compound.objects[size - 1] = o;
+                assert(size - 1 < space);
             }
             body.p_compound.count = size;
             break;

@@ -8,11 +8,14 @@ extern "C" {
 
 }
 
-#include "chunk_mesh.h"
+struct ChunkMesh;
 
 #include "rustex.h"
+
 #include <future>
 #include <mutex>
+#include <unordered_map>
+#include <vector>
 
 struct Int2 {
     int32_t x, z;
@@ -42,7 +45,11 @@ struct Chunk {
     int cx, cz;
     McChunk* enkl_chunk = nullptr;
     ChunkData data = {};
-    Mutex<std::shared_ptr<ChunkMesh>> mesh;
+    struct MeshContainer {
+        std::shared_ptr<ChunkMesh> mesh;
+        bool task_spawned = false;
+    };
+    Mutex<MeshContainer> mesh;
 
     Chunk(Region&, int x, int z);
     Chunk(const Chunk&) = delete;
@@ -55,18 +62,16 @@ struct Region {
     McRegion* enkl_region = nullptr;
     bool loaded = false;
     bool unloaded = false;
-    std::unordered_map<Int2, std::shared_ptr<Chunk>> chunks;
+    std::unordered_map<Int2, Chunk*> chunks;
 
     Region(World&, int rx, int rz);
     Region(const Region&) = delete;
     ~Region();
 
 protected:
-    Mutex<int> users;
+    int users = 0;
 
-    std::shared_ptr<Chunk> get_chunk(unsigned rcx, unsigned rcz);
-    std::shared_ptr<Chunk> load_chunk(int cx, int cz);
-    void unload_chunk(Chunk*);
+    Chunk* get_chunk(unsigned rcx, unsigned rcz);
     friend World;
     friend Chunk;
 };
@@ -74,7 +79,8 @@ protected:
 struct World {
     Enkl_Allocator allocator;
     McWorld* enkl_world;
-    Mutex<std::unordered_map<Int2, std::shared_ptr<Region>>> regions;
+    Mutex<std::unordered_map<Int2, std::unique_ptr<Region>>> regions;
+    Mutex<std::unordered_map<Int2, std::shared_ptr<Chunk>>> held_chunks;
 
     explicit World(const char*);
     World(const World&) = delete;
@@ -86,9 +92,9 @@ struct World {
     std::vector<std::shared_ptr<Chunk>> loaded_chunks();
 private:
     template<typename Guard>
-    std::shared_ptr<Region> get_loaded_region(Guard&, int rx, int rz);
+    Region* get_loaded_region(Guard&, int rx, int rz);
     template<typename Guard>
-    std::shared_ptr<Region> load_region(Guard&, int rx, int rz);
+    Region* load_region(Guard&, int rx, int rz);
     template<typename Guard>
     void unload_region(Guard, Region*);
 

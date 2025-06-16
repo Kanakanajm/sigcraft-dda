@@ -2,12 +2,15 @@
 #include "imr/util.h"
 
 #include "world.h"
+#include "chunk_mesh.h"
 
 #include <cmath>
 #include "nasl/nasl.h"
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
+
+#include <semaphore>
 
 using namespace nasl;
 
@@ -17,7 +20,11 @@ struct {
     float time;
 } push_constants;
 
-Camera camera;
+Camera camera = {
+    .position = {
+        0, 128, 0,
+    },
+};
 CameraFreelookState camera_state = {
     .fly_speed = 100.0f,
     .mouse_sensitivity = 1,
@@ -122,10 +129,62 @@ struct Shaders {
     }
 };
 
+struct ThreadPool {
+    using Task = std::function<void(void)>;
+    rustex::mutex<std::vector<Task>> tasks;
+    std::counting_semaphore<256> sem { 0 };
+    std::vector<std::future<void>> threads;
+
+    ThreadPool(unsigned size) {
+        assert(size > 0);
+        for (unsigned i = 0; i < size; i++) {
+            threads.emplace_back(std::async(std::launch::async, [&]() {
+                while (true) {
+                    auto pop_task = [&]() -> std::optional<Task> {
+                        auto tasks_guard = tasks.lock_mut();
+                        if (tasks_guard->empty()) {
+                            return std::nullopt;
+                        } else {
+                            auto task = tasks_guard->back();
+                            tasks_guard->pop_back();
+                            return task;
+                        }
+                    };
+
+                    sem.acquire();
+                    auto task = pop_task();
+                    // if the semaphore let us through, either a task is available
+                    if (task)
+                        (*task)();
+                    // or one isn't and this is the end
+                    else
+                        break;
+                }
+            }));
+        }
+    }
+
+    ThreadPool(ThreadPool&) = delete;
+
+    ~ThreadPool() {
+        sem.release(threads.size());
+    }
+
+    void schedule(Task&& t) {
+        auto tasks_guard = tasks.lock_mut();
+        tasks_guard->push_back(std::move(t));
+        sem.release(1);
+    }
+};
+
+int radius = 16;
+
 int main(int argc, char** argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     auto window = glfwCreateWindow(1024, 1024, "Example", nullptr, nullptr);
+
+    ThreadPool tp(std::thread::hardware_concurrency());
 
     if (argc < 2)
         return 0;
@@ -133,10 +192,15 @@ int main(int argc, char** argv) {
     glfwSetKeyCallback(window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {
         if (key == GLFW_KEY_R && (mods & GLFW_MOD_CONTROL))
             reload_shaders = true;
+        if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
+            radius++;
+        if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
+            radius--;
     });
 
     imr::Context context;
     imr::Device device(context);
+    std::mutex device_mutex;
     imr::Swapchain swapchain(device, window);
     imr::FpsCounter fps_counter;
 
@@ -156,6 +220,7 @@ int main(int argc, char** argv) {
         fps_counter.tick();
         fps_counter.updateGlfwWindowTitle(window);
 
+        std::scoped_lock<std::mutex> device_lock(device_mutex);
         swapchain.renderFrameSimplified([&](imr::Swapchain::SimplifiedRenderContext& context) {
             camera_update(window, &camera_input);
             camera_move_freelook(&camera, &camera_input, &camera_state, delta);
@@ -246,34 +311,11 @@ int main(int argc, char** argv) {
                     auto loaded = world.get_loaded_chunk(cx, cz);
                     if (!loaded)
                         world.load_chunk(cx, cz);
-                    else {
-                        auto mesh = loaded->mesh.lock_mut();
-                        if (*mesh)
-                            return;
-
-                        bool all_neighbours_loaded = true;
-                        ChunkNeighbors n = {};
-                        for (int dx = -1; dx < 2; dx++) {
-                            for (int dz = -1; dz < 2; dz++) {
-                                int nx = cx + dx;
-                                int nz = cz + dz;
-
-                                auto neighborChunk = world.get_loaded_chunk(nx, nz);
-                                if (neighborChunk)
-                                    n.neighbours[dx + 1][dz + 1] = &neighborChunk->data;
-                                else
-                                    all_neighbours_loaded = false;
-                            }
-                        }
-                        if (all_neighbours_loaded)
-                            loaded->mesh = std::make_unique<ChunkMesh>(device, n);
-                    }
                 };
 
                 int player_chunk_x = camera.position.x / 16;
                 int player_chunk_z = camera.position.z / 16;
 
-                int radius = 24;
                 for (int dx = -radius; dx <= radius; dx++) {
                     for (int dz = -radius; dz <= radius; dz++) {
                         load_chunk(player_chunk_x + dx, player_chunk_z + dz);
@@ -286,10 +328,39 @@ int main(int argc, char** argv) {
                         continue;
                     }
 
-                    auto mesh_lock = chunk->mesh.lock();
-                    if (!*mesh_lock)
+                    auto mesh_lock = chunk->mesh.lock_mut();
+                    auto& mesh_container = *mesh_lock;
+                    if (!mesh_container.mesh) {
+                        if (mesh_container.task_spawned)
+                            continue;
+
+                        bool all_neighbours_loaded = true;
+                        ChunkNeighbors n = {};
+                        for (int dx = -1; dx < 2; dx++) {
+                            for (int dz = -1; dz < 2; dz++) {
+                                int nx = chunk->cx + dx;
+                                int nz = chunk->cz + dz;
+
+                                auto neighborChunk = world.get_loaded_chunk(nx, nz);
+                                if (neighborChunk)
+                                    n.neighbours[dx + 1][dz + 1] = neighborChunk;
+                                else
+                                    all_neighbours_loaded = false;
+                            }
+                        }
+                        if (all_neighbours_loaded) {
+                            mesh_container.task_spawned = true;
+                            tp.schedule([n,&device,&device_mutex,chunk = chunk]() {
+                                auto nn = n;
+                                auto mesh = std::make_shared<ChunkMesh>(device, device_mutex, nn);
+                                auto mesh_lock = chunk->mesh.lock_mut();
+                                mesh_lock->mesh = mesh;
+                                mesh_lock->task_spawned = false;
+                            });
+                        }
                         continue;
-                    auto mesh = *mesh_lock;
+                    }
+                    auto mesh = mesh_container.mesh;
                     if (mesh->num_verts == 0)
                         continue;
 

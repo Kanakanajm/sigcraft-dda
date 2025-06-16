@@ -150,7 +150,7 @@ static void paste_plus_z_face(std::vector<uint8_t>& g, nasl::vec3 color, unsigne
 
 #undef V
 
-static BlockData access_safe(const ChunkData* chunk, ChunkNeighbors& neighbours, int x, int y, int z) {
+static BlockData access_safe(const ChunkData* chunk, ChunkNeighborsUnsafe& neighbours, int x, int y, int z) {
     unsigned int i, k;
     if (x < 0) {
         i = 0;
@@ -181,7 +181,7 @@ static BlockData access_safe(const ChunkData* chunk, ChunkNeighbors& neighbours,
     return BlockAir;
 }
 
-void chunk_mesh(const ChunkData* chunk, ChunkNeighbors& neighbours, std::vector<uint8_t>& g, size_t* num_verts) {
+void chunk_mesh(const ChunkData* chunk, ChunkNeighborsUnsafe& neighbours, std::vector<uint8_t>& g, size_t* num_verts) {
     *num_verts = 0;
     for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
         for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
@@ -225,9 +225,15 @@ void chunk_mesh(const ChunkData* chunk, ChunkNeighbors& neighbours, std::vector<
     }
 }
 
-ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
+ChunkMesh::ChunkMesh(imr::Device& d, std::mutex& mutex, ChunkNeighbors& n) {
     std::vector<uint8_t> g;
-    chunk_mesh(n.neighbours[1][1], n, g, &num_verts);
+    ChunkNeighborsUnsafe unsafe {};
+    for (size_t x = 0; x < 3; x++) {
+        for (size_t z = 0; z < 3; z++) {
+            unsafe.neighbours[x][z] = &n.neighbours[x][z].get()->data;
+        }
+    }
+    chunk_mesh(unsafe.neighbours[1][1], unsafe, g, &num_verts);
 
     //fprintf(stderr, "%zu vertices, totalling %zu KiB of data\n", num_verts, num_verts * sizeof(float) * 5 / 1024);
     //fflush(stderr);
@@ -236,7 +242,9 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     void* buffer = g.data();
 
     if (buffer_size > 0) {
+        mutex.lock();
         buf = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         buf->uploadDataSync(0, buffer_size, buffer);
+        mutex.unlock();
     }
 }
