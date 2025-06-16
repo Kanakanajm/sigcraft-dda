@@ -281,19 +281,14 @@ int main(int argc, char** argv) {
 
                 for (auto chunk : world.loaded_chunks()) {
                     if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
-                        std::unique_ptr<ChunkMesh> stolen = std::move(chunk->mesh);
-                        if (stolen) {
-                            ChunkMesh* released = stolen.release();
-                            context.frame().addCleanupAction([=]() {
-                                delete released;
-                            });
-                        }
                         world.unload_chunk(chunk);
                         continue;
                     }
 
-                    auto& mesh = chunk->mesh;
-                    if (!mesh || mesh->num_verts == 0)
+                    if (!chunk->mesh)
+                        continue;
+                    auto mesh = chunk->mesh;
+                    if (mesh->num_verts == 0)
                         continue;
 
                     push_constants.chunk_position = { chunk->cx, 0, chunk->cz };
@@ -303,6 +298,10 @@ int main(int argc, char** argv) {
 
                     assert(mesh->num_verts > 0);
                     vkCmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
+
+                    context.frame().addCleanupAction([=, mesh = mesh]() {
+
+                    });
                 }
             });
 

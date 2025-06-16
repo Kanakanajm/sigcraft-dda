@@ -10,6 +10,9 @@ extern "C" {
 
 #include "chunk_mesh.h"
 
+#include <future>
+#include <mutex>
+
 struct Int2 {
     int32_t x, z;
     bool operator==(const Int2 &other) const {
@@ -35,7 +38,8 @@ struct Chunk {
     int cx, cz;
     McChunk* enkl_chunk = nullptr;
     ChunkData data = {};
-    std::unique_ptr<ChunkMesh> mesh;
+    std::mutex mesh_lock;
+    std::shared_ptr<ChunkMesh> mesh;
 
     Chunk(Region&, int x, int z);
     Chunk(const Chunk&) = delete;
