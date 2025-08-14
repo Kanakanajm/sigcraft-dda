@@ -1,3 +1,4 @@
+#include <iostream>
 #include "imr/imr.h"
 #include "imr/util.h"
 
@@ -13,7 +14,8 @@
 
 using namespace nasl;
 
-struct {
+struct
+{
     mat4 matrix;
     ivec3 chunk_position;
     float time;
@@ -21,38 +23,40 @@ struct {
 
 Camera camera = {
     .position = {
-        0, 128, 0,
+        -128,
+        180,
+        -128,
     },
-};
+    .rotation = {-90, 0},
+    .fov = 60};
 CameraFreelookState camera_state = {
     .fly_speed = 100.0f,
     .mouse_sensitivity = 1,
 };
 CameraInput camera_input;
 
-void camera_update(GLFWwindow*, CameraInput* input);
+void camera_update(GLFWwindow *, CameraInput *input);
 
 bool reload_shaders = false;
 
-struct Shaders {
-    std::vector<std::string> files = { "basic.vert.spv", "basic.frag.spv" };
+struct Shaders
+{
+    std::vector<std::string> files = {"basic.vert.spv", "basic.frag.spv"};
 
     std::vector<std::unique_ptr<imr::ShaderModule>> modules;
     std::vector<std::unique_ptr<imr::ShaderEntryPoint>> entry_points;
     std::unique_ptr<imr::GraphicsPipeline> pipeline;
 
-    Shaders(imr::Device& d, imr::Swapchain& swapchain) {
+    Shaders(imr::Device &d, imr::Swapchain &swapchain)
+    {
         imr::GraphicsPipeline::RenderTargetsState rts;
-        rts.color.push_back((imr::GraphicsPipeline::RenderTarget) {
+        rts.color.push_back((imr::GraphicsPipeline::RenderTarget){
             .format = swapchain.format(),
             .blending = {
                 .blendEnable = false,
-                .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
-            }
-        });
+                .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT}});
         imr::GraphicsPipeline::RenderTarget depth = {
-            .format = VK_FORMAT_D32_SFLOAT
-        };
+            .format = VK_FORMAT_D32_SFLOAT};
         rts.depth = depth;
 
         VkVertexInputBindingDescription bindings[] = {
@@ -84,7 +88,7 @@ struct Shaders {
             },
         };
 
-        VkPipelineVertexInputStateCreateInfo vertex_input {
+        VkPipelineVertexInputStateCreateInfo vertex_input{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
             .vertexBindingDescriptionCount = sizeof(bindings) / sizeof(bindings[0]),
             .pVertexBindingDescriptions = &bindings[0],
@@ -92,7 +96,7 @@ struct Shaders {
             .pVertexAttributeDescriptions = &attributes[0],
         };
 
-        VkPipelineRasterizationStateCreateInfo rasterization {
+        VkPipelineRasterizationStateCreateInfo rasterization{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 
             .polygonMode = VK_POLYGON_MODE_FILL,
@@ -111,8 +115,9 @@ struct Shaders {
             .depthStencilState = imr::GraphicsPipeline::simple_depth_testing(),
         };
 
-        std::vector<imr::ShaderEntryPoint*> entry_point_ptrs;
-        for (auto filename : files) {
+        std::vector<imr::ShaderEntryPoint *> entry_point_ptrs;
+        for (auto filename : files)
+        {
             VkShaderStageFlagBits stage;
             if (filename.ends_with("vert.spv"))
                 stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -130,7 +135,8 @@ struct Shaders {
 
 int radius = 16;
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv)
+{
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     auto window = glfwCreateWindow(1024, 1024, "Example", nullptr, nullptr);
@@ -140,14 +146,14 @@ int main(int argc, char** argv) {
     if (argc < 2)
         return 0;
 
-    glfwSetKeyCallback(window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {
+    glfwSetKeyCallback(window, [](GLFWwindow *window, int key, int scancode, int action, int mods)
+                       {
         if (key == GLFW_KEY_R && (mods & GLFW_MOD_CONTROL))
             reload_shaders = true;
         if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
             radius++;
         if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
-            radius--;
-    });
+            radius--; });
 
     imr::Context context;
     imr::Device device(context);
@@ -160,19 +166,19 @@ int main(int argc, char** argv) {
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
 
-    camera = {{0, 0, 3}, {0, 0}, 60};
-
     std::unique_ptr<imr::Image> depthBuffer;
 
     auto shaders = std::make_unique<Shaders>(device, swapchain);
 
-    auto& vk = device.dispatch;
-    while (!glfwWindowShouldClose(window)) {
+    auto &vk = device.dispatch;
+    while (!glfwWindowShouldClose(window))
+    {
         fps_counter.tick();
         fps_counter.updateGlfwWindowTitle(window);
 
         std::scoped_lock<std::mutex> device_lock(device_mutex);
-        swapchain.renderFrameSimplified([&](imr::Swapchain::SimplifiedRenderContext& context) {
+        swapchain.renderFrameSimplified([&](imr::Swapchain::SimplifiedRenderContext &context)
+                                        {
             camera_update(window, &camera_input);
             camera_move_freelook(&camera, &camera_input, &camera_state, delta);
 
@@ -264,67 +270,63 @@ int main(int argc, char** argv) {
                         world.load_chunk(cx, cz);
                 };
 
-                int player_chunk_x = camera.position.x / 16;
-                int player_chunk_z = camera.position.z / 16;
+                int player_chunk_x = -128 / 16;
+                int player_chunk_z = -128 / 16;
 
-                for (int dx = -radius; dx <= radius; dx++) {
+                load_chunk(player_chunk_x, player_chunk_z);
+                
+                /* for (int dx = -radius; dx <= radius; dx++) {
                     for (int dz = -radius; dz <= radius; dz++) {
                         load_chunk(player_chunk_x + dx, player_chunk_z + dz);
                     }
+                } */
+
+                auto chunk = world.get_loaded_chunk(player_chunk_x, player_chunk_z);
+                if (!chunk) {
+                    return;
                 }
 
-                for (auto chunk : world.loaded_chunks()) {
-                    if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
-                        world.unload_chunk(chunk.get());
-                        continue;
-                    }
-
+                {
                     auto mesh_lock = chunk->mesh.lock_mut();
                     auto& mesh_container = *mesh_lock;
-                    if (!mesh_container.mesh) {
-                        if (mesh_container.task_spawned)
-                            continue;
 
-                        bool all_neighbours_loaded = true;
+                    if (!mesh_container.mesh && !mesh_container.task_spawned) {
+                        mesh_container.task_spawned = true;
+
                         ChunkNeighbors n = {};
-                        for (int dx = -1; dx < 2; dx++) {
-                            for (int dz = -1; dz < 2; dz++) {
-                                int nx = chunk->cx + dx;
-                                int nz = chunk->cz + dz;
+                        n.neighbours[1][1] = chunk;
+                        
 
-                                auto neighborChunk = world.get_loaded_chunk(nx, nz);
-                                if (neighborChunk)
-                                    n.neighbours[dx + 1][dz + 1] = neighborChunk;
-                                else
-                                    all_neighbours_loaded = false;
-                            }
-                        }
-                        if (all_neighbours_loaded) {
-                            mesh_container.task_spawned = true;
-                            tp.schedule([n,&device,&device_mutex,chunk = chunk]() {
-                                auto nn = n;
-                                auto mesh = std::make_shared<ChunkMesh>(device, device_mutex, nn);
-                                auto mesh_lock = chunk->mesh.lock_mut();
-                                mesh_lock->mesh = mesh;
-                                mesh_lock->task_spawned = false;
-                            });
-                        }
-                        continue;
+                        tp.schedule([n,&device,&device_mutex,chunk = chunk]() {
+                            auto nn = n;
+                            auto mesh = std::make_shared<ChunkMesh>(device, device_mutex, nn);
+                            auto mesh_lock = chunk->mesh.lock_mut();
+                            mesh_lock->mesh = mesh;
+                            mesh_lock->task_spawned = false;
+                        });
                     }
+
+                    if (!mesh_container.mesh || mesh_container.mesh->num_verts == 0) {
+                        return;
+                    }
+
                     auto mesh = mesh_container.mesh;
-                    if (mesh->num_verts == 0)
-                        continue;
 
                     push_constants.chunk_position = { chunk->cx, 0, chunk->cz };
-                    vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push_constants), &push_constants);
+                    vkCmdPushConstants(
+                        cmdbuf,
+                        pipeline->layout(),
+                        VK_SHADER_STAGE_VERTEX_BIT,
+                        0,
+                        sizeof(push_constants),
+                        &push_constants
+                    );
 
-                    vkCmdBindVertexBuffers(cmdbuf, 0, 1, &mesh->buf->handle, tmpPtr((VkDeviceSize) 0));
-
+                    vkCmdBindVertexBuffers(cmdbuf, 0, 1, &mesh->buf->handle, tmpPtr((VkDeviceSize)0));
                     assert(mesh->num_verts > 0);
                     vkCmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
 
                     context.frame().addCleanupAction([=, mesh = mesh]() {
-
                     });
                 }
             });
@@ -333,8 +335,7 @@ int main(int argc, char** argv) {
             delta = ((float) ((now - prev_frame) / 1000L)) / 1000000.0f;
             prev_frame = now;
 
-            glfwPollEvents();
-        });
+            glfwPollEvents(); });
     }
 
     swapchain.drain();
