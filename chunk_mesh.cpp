@@ -230,7 +230,8 @@ ChunkMesh::ChunkMesh(imr::Device& d, std::mutex& mutex, ChunkNeighbors& n) {
     ChunkNeighborsUnsafe unsafe {};
     for (size_t x = 0; x < 3; x++) {
         for (size_t z = 0; z < 3; z++) {
-            unsafe.neighbours[x][z] = &n.neighbours[x][z].get()->data;
+            if (n.neighbours[x][z])
+                unsafe.neighbours[x][z] = &n.neighbours[x][z].get()->data;
         }
     }
     chunk_mesh(unsafe.neighbours[1][1], unsafe, g, &num_verts);
