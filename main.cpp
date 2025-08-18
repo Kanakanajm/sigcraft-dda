@@ -87,7 +87,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    std::cout << "Wold loaded chunk" << std::endl;
+    std::cout << "World loaded chunk" << std::endl;
 
     // chunk position (flat, no height)
 
