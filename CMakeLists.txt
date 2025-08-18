@@ -3,7 +3,7 @@ project(sigcraft)
 
 set(CMAKE_CXX_STANDARD 20)
 
-set(IMR_FOLDER "" CACHE STRING "Folder where IMR is found")
+set(IMR_FOLDER "/home/jackie/repos/imr" CACHE STRING "Folder where IMR is found")
 add_subdirectory(${IMR_FOLDER} imr_build)
 
 if (NOT TARGET imr)
