@@ -12,13 +12,46 @@ mat4 camera_rotation_matrix(const Camera *camera) {
     return matrix;
 }
 
+mat4 camera_rotation_matrix_axis(const vec3 &axis, float angle) {
+    vec3 a = normalize(axis);
+    float x = a[0], y = a[1], z = a[2];
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+    float C = 1.0f - c;
+
+    mat4 R = {// Row 0
+              c + x * x * C, x * y * C - z * s, x * z * C + y * s, 0.0f,
+              // Row 1
+              y * x * C + z * s, c + y * y * C, y * z * C - x * s, 0.0f,
+              // Row 2
+              z * x * C - y * s, z * y * C + x * s, c + z * z * C, 0.0f,
+              // Row 3
+              0.0f, 0.0f, 0.0f, 1.0f};
+
+    return R;
+}
+
+mat4 camera_to_world_rotation_matrix(const Camera *camera) {
+    mat4 matrix = identity_mat4;
+    matrix = mul_mat4(rotate_axis_mat4(1, camera->rotation.yaw), matrix);
+    vec4 right = {1, 0, 0, 0};
+    vec4 right_rotated = matrix * right;
+    vec3 right_rotated_axis = normalize(vec3(right_rotated.xyz));
+    matrix = mul_mat4(camera_rotation_matrix_axis(right_rotated_axis,
+                                                  -camera->rotation.pitch),
+                      matrix);
+    return matrix;
+}
+
 mat4 camera_get_view_mat4(const Camera *camera, size_t width, size_t height) {
     mat4 matrix = identity_mat4;
-    matrix = mul_mat4(translate_mat4(vec3_neg(camera->position)), matrix);
-    matrix = mul_mat4(camera_rotation_matrix(camera), matrix);
+    matrix = mul_mat4(translate_mat4(vec3_neg(camera->position)),
+                      matrix); // T_translate * I
+    matrix = mul_mat4(camera_rotation_matrix(camera),
+                      matrix); // T_rotate * T_translate * I
     float ratio = ((float)width) / ((float)height);
-    matrix =
-        mul_mat4(perspective_mat4(ratio, camera->fov, 0.1f, 1000.f), matrix);
+    matrix = mul_mat4(perspective_mat4(ratio, camera->fov, 0.1f, 1000.f),
+                      matrix); // Project * T_rotate * T_translate * I
     return matrix;
 }
 
@@ -44,15 +77,15 @@ vec3 camera_get_forward_vec(const Camera *cam, vec3 forward) {
     vec4 initial_forward(forward, 1);
     // we invert the rotation matrix and use the front vector from the camera
     // space to get the one in world space
-    mat4 matrix = invert_mat4(camera_rotation_matrix(cam));
+    mat4 matrix = camera_to_world_rotation_matrix(cam);
     vec4 result = mul_mat4_vec4f(matrix, initial_forward);
     return vec3_scale(result.xyz, 1.0f / result.w);
 }
 
 vec3 camera_get_right_vec(const Camera *cam) {
-    vec4 initial_forward(1, 0, 0, 1);
-    mat4 matrix = invert_mat4(camera_rotation_matrix(cam));
-    vec4 result = mul_mat4_vec4f(matrix, initial_forward);
+    vec4 initial_right(1, 0, 0, 1);
+    mat4 matrix = camera_to_world_rotation_matrix(cam);
+    vec4 result = mul_mat4_vec4f(matrix, initial_right);
     return vec3_scale(result.xyz, 1.0f / result.w);
 }
 

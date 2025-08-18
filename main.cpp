@@ -28,9 +28,7 @@ struct {
 struct {
     VkDeviceAddress chunk_buffer;
     vec3 pos;
-    vec3 dir;
-    vec3 plane_u;
-    vec3 plane_v;
+    mat4 r;
 } push_constants;
 
 Camera camera = {
@@ -42,7 +40,7 @@ Camera camera = {
         },
 };
 CameraFreelookState camera_state = {
-    .fly_speed = 100.0f,
+    .fly_speed = 50.0f,
     .mouse_sensitivity = 1,
 };
 CameraInput camera_input;
@@ -137,10 +135,7 @@ int main(int argc, char **argv) {
                                      delta);
 
                 push_constants.pos = camera.position;
-                Plane plane = camera_get_plane(&camera);
-                push_constants.dir = plane.n;
-                push_constants.plane_u = plane.u;
-                push_constants.plane_v = plane.v;
+                push_constants.r = camera_to_world_rotation_matrix(&camera);
 
                 auto &image = context.image();
                 auto cmdbuf = context.cmdbuf();

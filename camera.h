@@ -25,6 +25,8 @@ typedef struct {
 vec3 camera_get_forward_vec(const Camera *cam, vec3 forward = vec3(0, 0, -1));
 vec3 camera_get_right_vec(const Camera *);
 mat4 camera_get_view_mat4(const Camera *, size_t, size_t);
+mat4 camera_rotation_matrix(const Camera *camera);
+mat4 camera_to_world_rotation_matrix(const Camera *camera);
 
 typedef struct {
     float fly_speed, mouse_sensitivity;

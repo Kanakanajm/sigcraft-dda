@@ -4,7 +4,7 @@
 #extension GL_EXT_buffer_reference : require
 
 #define MAX_STEP 100
-#define TAN_FOV 1
+#define TAN_FOV 1 // tan(fov/2)
 
 layout(set = 0, binding = 0) uniform image2D renderTarget;
 
@@ -15,9 +15,7 @@ layout(scalar, buffer_reference) buffer ChuckBuffer { int data[384][16][16]; };
 layout(scalar, push_constant) uniform T {
     ChuckBuffer chuck_buffer;
     vec3 pos;
-    vec3 dir;
-    vec3 plane_u;
-    vec3 plane_v;
+    mat4 r;
 }
 push_constants;
 
@@ -56,10 +54,12 @@ void main() {
 
     // normalized screen coordinates
     vec2 screen = gl_GlobalInvocationID.xy / vec2(img_size) * 2 - 1;
+    screen.y = -screen.y;
 
-    vec3 ray_dir =
-        push_constants.dir + push_constants.plane_u * screen.x * TAN_FOV +
-        push_constants.plane_v * screen.y * TAN_FOV * img_size.y / img_size.x;
+    vec4 d = vec4(screen.x, screen.y, -1, 0);
+    vec4 d_prime = normalize(push_constants.r * d);
+
+    vec3 ray_dir = d_prime.xyz;
 
     vec3 deltaDist = abs(1 / ray_dir);
 
