@@ -4,7 +4,13 @@
 #extension GL_EXT_buffer_reference : require
 
 #define MAX_STEP 100
-#define TAN_FOV 1 // tan(fov/2)
+
+vec4 color_palette[14] = {
+    {0.0, 0.0, 0.0, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.25, 0.25, 0, 1.0},
+    {0.2, 0.8, 0.1, 1.0}, {0.2, 0.9, 0.1, 1.0}, {0.8, 0.8, 0.0, 1.0},
+    {0.9, 0.9, 0.9, 1.0}, {0.8, 0.5, 0.0, 1.0}, {0.0, 0.2, 0.8, 1.0},
+    {0.1, 0.4, 0.1, 1.0}, {0.3, 0.1, 0.0, 1.0}, {1.0, 1.0, 1.0, 1.0},
+    {1.0, 0.2, 0.0, 1.0}, {1.0, 0.0, 1.0, 1.0}};
 
 layout(set = 0, binding = 0) uniform image2D renderTarget;
 
@@ -25,24 +31,11 @@ bool isBlock(ivec3 m) {
 }
 
 vec4 blockColor(ivec3 m) {
-    vec4 c;
-    switch (push_constants.chuck_buffer.data[m.y][m.x][m.z]) {
-    case 1:
-        c = vec4(0.5, 0.5, 0.5, 1.0);
-        break; // grey
-    case 2:
-        c = vec4(0.0, 1.0, 0.0, 1.0);
-        break; // green
-    case 3:
-        c = vec4(0.0, 0.0, 1.0, 1.0);
-        break; // blue
-    case 4:
-        c = vec4(1.0, 1.0, 1.0, 1.0);
-        break; // white
-    default:
-        c = vec4(0.0, 0.0, 0.0, 1.0);
-        break; // black
-    }
+    int b = push_constants.chuck_buffer.data[m.y][m.x][m.z];
+    vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
+    if (b >= 0 && b < 14)
+        c = color_palette[b];
+
     return c;
 }
 
@@ -69,7 +62,7 @@ void main() {
                     deltaDist;
 
     bool hit = false;
-    bvec3 mask;
+    bvec3 mask = bvec3(false, true, false);
 
     vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
 

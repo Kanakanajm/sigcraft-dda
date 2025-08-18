@@ -18,11 +18,12 @@ struct {
     ivec2 chunk_pos;
     mat4 m;
     float fov;
-    vec3 color_palette[14] = {{0.0, 0.0, 0.0}, {0.5, 0.5, 0.5}, {0.25, 0.25, 0},
-                              {0.2, 0.8, 0.1}, {0.2, 0.9, 0.1}, {0.8, 0.8, 0.0},
-                              {0.9, 0.9, 0.9}, {0.8, 0.5, 0.0}, {0.0, 0.2, 0.8},
-                              {0.1, 0.4, 0.1}, {0.3, 0.1, 0.0}, {1.0, 1.0, 1.0},
-                              {1.0, 0.2, 0.0}, {1.0, 0.0, 1.0}};
+    vec4 color_palette[14] = {
+        {0.0, 0.0, 0.0, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.25, 0.25, 0, 1.0},
+        {0.2, 0.8, 0.1, 1.0}, {0.2, 0.9, 0.1, 1.0}, {0.8, 0.8, 0.0, 1.0},
+        {0.9, 0.9, 0.9, 1.0}, {0.8, 0.5, 0.0, 1.0}, {0.0, 0.2, 0.8, 1.0},
+        {0.1, 0.4, 0.1, 1.0}, {0.3, 0.1, 0.0, 1.0}, {1.0, 1.0, 1.0, 1.0},
+        {1.0, 0.2, 0.0, 1.0}, {1.0, 0.0, 1.0, 1.0}};
 } push_constants_old;
 
 struct {
@@ -40,7 +41,7 @@ Camera camera = {
         },
 };
 CameraFreelookState camera_state = {
-    .fly_speed = 50.0f,
+    .fly_speed = 10.0f,
     .mouse_sensitivity = 1,
 };
 CameraInput camera_input;
@@ -73,7 +74,7 @@ int main(int argc, char **argv) {
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
 
-    camera = {{0, 0, 3}, {0, 0}, 60};
+    camera = {{17, 0, 17}, {0, 0}, 45};
 
     int player_chunk_x = camera.position.x / 16;
     int player_chunk_z = camera.position.z / 16;
