@@ -3,150 +3,119 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
 
-#define M_PI 3.14159265358979323846
-#define VISIBILITY 100 // maximum number of blocks to traverse in DDA
+#define MAX_STEP 100
+#define TAN_FOV 1
 
 layout(set = 0, binding = 0) uniform image2D renderTarget;
 
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
-layout(scalar, buffer_reference) buffer ChunkBuffer { int data[16][384][16]; };
+layout(scalar, buffer_reference) buffer ChuckBuffer { int data[384][16][16]; };
+
 layout(scalar, push_constant) uniform T {
-  ChunkBuffer chunk_buffer;
-  ivec2 chunk_pos; // .x = cx, .y = cz
-  mat4 m;
-  float fov;
-  vec3[14] color_palette;
+    ChuckBuffer chuck_buffer;
+    vec3 pos;
+    vec3 dir;
+    vec3 plane_u;
+    vec3 plane_v;
 }
 push_constants;
 
+bool isBlock(ivec3 m) {
+    return m.x >= 0 && m.x < 16 && m.z >= 0 && m.z < 16 && m.y >= 0 &&
+           m.y < 384 && push_constants.chuck_buffer.data[m.y][m.x][m.z] > 0;
+}
+
+vec4 blockColor(ivec3 m) {
+    vec4 c;
+    switch (push_constants.chuck_buffer.data[m.y][m.x][m.z]) {
+    case 1:
+        c = vec4(0.5, 0.5, 0.5, 1.0);
+        break; // grey
+    case 2:
+        c = vec4(0.0, 1.0, 0.0, 1.0);
+        break; // green
+    case 3:
+        c = vec4(0.0, 0.0, 1.0, 1.0);
+        break; // blue
+    case 4:
+        c = vec4(1.0, 1.0, 1.0, 1.0);
+        break; // white
+    default:
+        c = vec4(0.0, 0.0, 0.0, 1.0);
+        break; // black
+    }
+    return c;
+}
+
 void main() {
-  ivec2 img_size = imageSize(renderTarget);
-  float img_aspect_ratio = img_size.x / float(img_size.y);
+    ivec2 img_size = imageSize(renderTarget);
 
-  // spawn camera
-  vec4 camera_origin = vec4(0, 0, 0, 1);
-  float px = (2 * ((gl_GlobalInvocationID.x + 0.5) / img_size.x) - 1) *
-             tan(push_constants.fov / 2 * M_PI / 180) * img_aspect_ratio;
-  float py = (1 - 2 * ((gl_GlobalInvocationID.y + 0.5) / img_size.y)) *
-             tan(push_constants.fov / 2 * M_PI / 180);
-  vec3 camera_dir_ = normalize(vec3(px, py, -1));
-  vec4 camera_dir = vec4(camera_dir_.x, camera_dir_.y, camera_dir_.z, 0);
+    // block on map
+    ivec3 map = ivec3(floor(push_constants.pos));
 
-  // camera space to world space
-  camera_dir = push_constants.m * camera_dir;
-  camera_origin = push_constants.m * camera_origin;
+    // normalized screen coordinates
+    vec2 screen = gl_GlobalInvocationID.xy / vec2(img_size) * 2 - 1;
 
-  // world space to chunk space
-  camera_origin.x -= push_constants.chunk_pos.x;
-  camera_origin.z -= push_constants.chunk_pos.y;
+    vec3 ray_dir =
+        push_constants.dir + push_constants.plane_u * screen.x * TAN_FOV +
+        push_constants.plane_v * screen.y * TAN_FOV * img_size.y / img_size.x;
 
-  // vec3 camera_origin = vec3(16, 384, 16);
-  // vec3 dir = vec3(0, -1, 0);
+    vec3 deltaDist = abs(1 / ray_dir);
 
-  // vec3 planeX = vec3(-12, 0, 0);
-  // vec3 planeY = vec3(0, 0, -8);
-  // float cameraX = 2 * gl_GlobalInvocationID.x / float(img_size.x) - 1;
-  // float cameraY = 2 * gl_GlobalInvocationID.y / float(img_size.y) - 1;
+    ivec3 rayStep = ivec3(sign(ray_dir));
+    vec3 sideDist = (sign(ray_dir) * (vec3(map) - push_constants.pos) +
+                     (sign(ray_dir) * 0.5) + 0.5) *
+                    deltaDist;
 
-  // vec3 camera_dir = dir + planeX * cameraX + planeY * cameraY;
+    bool hit = false;
+    bvec3 mask;
 
-  // block on map
-  int mapX = int(camera_origin.x);
-  int mapY = int(camera_origin.y);
-  int mapZ = int(camera_origin.z);
+    vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
 
-  float deltaDistX = camera_dir.x == 0 ? 1e30 : abs(1 / camera_dir.x);
-  float deltaDistY = camera_dir.y == 0 ? 1e30 : abs(1 / camera_dir.y);
-  float deltaDistZ = camera_dir.z == 0 ? 1e30 : abs(1 / camera_dir.z);
+    // perform DDA
+    for (int i = 0; i < MAX_STEP; i++) {
+        if (isBlock(map)) {
+            hit = true;
+            break;
+        }
 
-  // length of ray from current position to next x, y or z-side
-  float sideDistX;
-  float sideDistY;
-  float sideDistZ;
-
-  // what direction to step in x, y or z-direction (either +1 or -1)
-  int stepX;
-  int stepY;
-  int stepZ;
-  int hit = 0; // was there a wall hit?
-  int side;    // was a NS(1), a EW(0) or a FB(2) wall hit?
-
-  // init step and sideDist
-  if (camera_dir.x < 0) {
-    stepX = -1;
-    sideDistX = (camera_origin.x - mapX) * deltaDistX;
-  } else {
-    stepX = 1;
-    sideDistX = (mapX + 1.0 - camera_origin.x) * deltaDistX;
-  }
-
-  if (camera_dir.y < 0) {
-    stepY = -1;
-    sideDistY = (camera_origin.y - mapY) * deltaDistY;
-  } else {
-    stepY = 1;
-    sideDistY = (mapY + 1.0 - camera_origin.y) * deltaDistY;
-  }
-
-  if (camera_dir.z < 0) {
-    stepZ = -1;
-    sideDistZ = (camera_origin.z - mapZ) * deltaDistZ;
-  } else {
-    stepZ = 1;
-    sideDistZ = (mapZ + 1.0 - camera_origin.z) * deltaDistZ;
-  }
-
-  // perform DDA
-  int i = 0;
-  int block_type = 0;
-  while (hit == 0 && i < VISIBILITY) {
-    // jump to next map square, either in x, y or z-direction
-    if (sideDistX < sideDistY) {
-      if (sideDistX < sideDistZ) {
-        sideDistX += deltaDistX;
-        mapX += stepX;
-        side = 0;
-      } else {
-        sideDistZ += deltaDistZ;
-        mapZ += stepZ;
-        side = 2;
-      }
-    } else {
-      if (sideDistY < sideDistZ) {
-        sideDistY += deltaDistY;
-        mapY += stepY;
-        side = 1;
-      } else {
-        sideDistZ += deltaDistZ;
-        mapZ += stepZ;
-        side = 2;
-      }
+        if (sideDist.x < sideDist.y) {
+            if (sideDist.x < sideDist.z) {
+                sideDist.x += deltaDist.x;
+                map.x += rayStep.x;
+                mask = bvec3(true, false, false);
+            } else {
+                sideDist.z += deltaDist.z;
+                map.z += rayStep.z;
+                mask = bvec3(false, false, true);
+            }
+        } else {
+            if (sideDist.y < sideDist.z) {
+                sideDist.y += deltaDist.y;
+                map.y += rayStep.y;
+                mask = bvec3(false, true, false);
+            } else {
+                sideDist.z += deltaDist.z;
+                map.z += rayStep.z;
+                mask = bvec3(false, false, true);
+            }
+        }
     }
 
-    // Check if ray has hit a wall
-    if (mapX >= 0 && mapX < 16 && mapZ >= 0 && mapZ < 16 && mapY >= 0 && mapY < 384 ) {
-      if (push_constants.chunk_buffer.data[mapX][mapY][mapZ] > 0) {
-        hit = 1;
-        block_type = push_constants.chunk_buffer.data[mapX][mapY][mapZ];
-      }
+    vec4 color = vec4(0.0);
+    if (hit) {
+        if (mask.x) {
+            color = vec4(0.5);
+        }
+        if (mask.y) {
+            color = vec4(1.0);
+        }
+        if (mask.z) {
+            color = vec4(0.75);
+        }
+        color = color * blockColor(map);
     }
-    i++;
-  }
 
-  vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
-
-  // if (hit == 1) {
-  //   c = vec4(1.0, 1.0, 1.0, 1.0);
-  // }
-
-  if (block_type > 0 && block_type < 14) {
-    // color known block type
-
-    c.x = push_constants.color_palette[block_type].x;
-    c.y = push_constants.color_palette[block_type].y;
-    c.z = push_constants.color_palette[block_type].z;
-  }
-
-  imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy), c);
+    imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy), color);
 }
