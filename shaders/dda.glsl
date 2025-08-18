@@ -41,12 +41,13 @@ vec4 blockColor(ivec3 m) {
 
 void main() {
     ivec2 img_size = imageSize(renderTarget);
-
+    float aspect_ratio = img_size.x / float(img_size.y);
     // block on map
     ivec3 map = ivec3(floor(push_constants.pos));
 
     // normalized screen coordinates
     vec2 screen = gl_GlobalInvocationID.xy / vec2(img_size) * 2 - 1;
+    screen.x = screen.x * aspect_ratio;
     screen.y = -screen.y;
 
     vec4 d = vec4(screen.x, screen.y, -1, 0);

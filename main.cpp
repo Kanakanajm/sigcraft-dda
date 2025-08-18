@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
 
-    camera = {{17, 0, 17}, {0, 0}, 45};
+    camera = {{17, 0, 17}, {0, 0}, 70};
 
     int player_chunk_x = camera.position.x / 16;
     int player_chunk_z = camera.position.z / 16;
