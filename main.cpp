@@ -5,9 +5,10 @@
 #include "chunk_mesh.h"
 #include "world.h"
 
+#include <cmath>
+
 #include "nasl/nasl.h"
 #include "nasl/nasl_mat.h"
-#include <cmath>
 
 #include "camera.h"
 #include "threadpool.h"
