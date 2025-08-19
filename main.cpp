@@ -41,7 +41,7 @@ Camera camera = {
         },
 };
 CameraFreelookState camera_state = {
-    .fly_speed = 10.0f,
+    .fly_speed = 100.0f,
     .mouse_sensitivity = 1,
 };
 CameraInput camera_input;
@@ -94,18 +94,22 @@ int main(int argc, char **argv) {
     // populate chunk data
     int num_solid_chuck = 0;
     int chunk_data[384][16][16];
-    for (unsigned int s = 0; s < 24; s++)
-        for (unsigned int x = 0; x < 16; x++)
-            for (unsigned int y = 0; y < 16; y++)
-                for (unsigned int z = 0; z < 16; z++) {
-                    if (chunk->data.sections[s] != 0) {
-                        chunk_data[y * s][x][z] =
-                            (int)chunk->data.sections[s]->block_data[x][y][z];
-                        num_solid_chuck++;
-                    } else {
-                        chunk_data[y * s][x][z] = 0;
+    std::memset(&chunk_data, 0, sizeof(chunk_data));
+
+    for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
+        if (chunk->data.sections[section] == 0)
+            continue;
+        for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
+            for (int y = 0; y < CUNK_CHUNK_SIZE; y++)
+                for (int z = 0; z < CUNK_CHUNK_SIZE; z++) {
+                    int world_y = y + section * CUNK_CHUNK_SIZE;
+                    BlockData block_data =
+                        chunk->data.sections[section]->block_data[x][y][z];
+                    if (block_data != BlockAir) {
+                        chunk_data[world_y][x][z] = block_data;
                     }
                 }
+    }
 
     std::cout << "Chunk data copied: " << num_solid_chuck << " / 98304"
               << std::endl;
