@@ -33,13 +33,13 @@ mat4 camera_rotation_matrix_axis(const vec3 &axis, float angle) {
 
 mat4 camera_to_world_rotation_matrix(const Camera *camera) {
     mat4 matrix = identity_mat4;
-    matrix = mul_mat4(rotate_axis_mat4(1, camera->rotation.yaw), matrix);
+    matrix = mul_mat4(rotate_axis_mat4(1, -camera->rotation.yaw), matrix);
     vec4 right = {1, 0, 0, 0};
     vec4 right_rotated = matrix * right;
     vec3 right_rotated_axis = normalize(vec3(right_rotated.xyz));
-    matrix = mul_mat4(camera_rotation_matrix_axis(right_rotated_axis,
-                                                  -camera->rotation.pitch),
-                      matrix);
+    matrix = mul_mat4(
+        camera_rotation_matrix_axis(right_rotated_axis, camera->rotation.pitch),
+        matrix);
     return matrix;
 }
 
