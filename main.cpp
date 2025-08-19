@@ -5,9 +5,9 @@
 #include "chunk_mesh.h"
 #include "world.h"
 
-#include <cmath>
 #include "nasl/nasl.h"
 #include "nasl/nasl_mat.h"
+#include <cmath>
 
 #include "camera.h"
 #include "threadpool.h"
@@ -173,9 +173,9 @@ int main(int argc, char **argv) {
                 const int gridH = 2 * radius + 1;
 
                 const int player_chunk_x =
-                    0; //int(std::floor(camera.position.x / 16.0f));
+                    0; // int(std::floor(camera.position.x / 16.0f));
                 const int player_chunk_z =
-                    0; //int(std::floor(camera.position.z / 16.0f));
+                    0; // int(std::floor(camera.position.z / 16.0f));
 
                 const int min_cx = player_chunk_x - radius;
                 const int min_cz = player_chunk_z - radius;
@@ -224,6 +224,9 @@ int main(int argc, char **argv) {
 
                 vkCmdDispatch(cmdbuf, (image.size().width + 31) / 32,
                               (image.size().height + 31) / 32, 1);
+
+                context.addCleanupAction(
+                    [=, &device]() { delete shader_bind_helper; });
 
                 auto now = imr_get_time_nano();
                 delta = ((float)((now - prev_frame) / 1000L)) / 1000000.0f;
