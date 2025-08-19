@@ -4,7 +4,7 @@ project(sigcraft)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-subobject-linkage")
 
-set(IMR_FOLDER "/home/memoryhunter/Projects/imr" CACHE STRING "Folder where IMR is found")
+set(IMR_FOLDER ${IMR} CACHE STRING "Folder where IMR is found")
 add_subdirectory(${IMR_FOLDER} imr_build)
 
 if (NOT TARGET imr)
