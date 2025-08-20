@@ -1,3 +1,8 @@
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
 #include "imr/imr.h"
 #include "imr/util.h"
 
@@ -9,7 +14,7 @@
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
-#include <iostream>
+#define NUM_CHUNKS_PER_AXIS 5
 
 using namespace nasl;
 
@@ -28,18 +33,19 @@ struct {
 
 struct {
     VkDeviceAddress chunk_buffer;
+    ivec2 chunk_pos;
     vec3 pos;
     mat4 r;
 } push_constants;
 
-Camera camera = {
-    .position =
-        {
-            0,
-            128,
-            0,
-        },
-};
+Camera camera = {.position =
+                     {
+                         32,
+                         128,
+                         32,
+                     },
+                 .rotation = {0, 1.5708},
+                 .fov = 60};
 CameraFreelookState camera_state = {
     .fly_speed = 100.0f,
     .mouse_sensitivity = 1,
@@ -56,6 +62,22 @@ struct Shaders {
 
 int radius = 16;
 
+vec3 parseVec3(const std::string &input) {
+    std::stringstream ss(input);
+    std::string item;
+    std::vector<float> values;
+
+    while (std::getline(ss, item, ',')) {
+        values.push_back(std::stof(item));
+    }
+
+    if (values.size() != 3) {
+        throw std::invalid_argument("Expected 3 comma-separated floats");
+    }
+
+    return vec3(values[0], values[1], values[2]);
+}
+
 int main(int argc, char **argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -70,49 +92,58 @@ int main(int argc, char **argv) {
     imr::FpsCounter fps_counter;
 
     auto world = World(argv[1]);
+    if (argc > 2) {
+        camera.position = parseVec3(argv[2]);
+    }
 
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
 
-    camera = {{17, 0, 17}, {0, 0}, 70};
-
     int player_chunk_x = camera.position.x / 16;
     int player_chunk_z = camera.position.z / 16;
 
-    // load only one chunk (where user is spawned / camera's initial position)
-    world.load_chunk(player_chunk_x, player_chunk_z);
-    auto chunk = world.get_loaded_chunk(player_chunk_x, player_chunk_z);
-    if (!chunk) {
-        std::cout << "No chunk" << std::endl;
-        return 0;
-    }
-
-    std::cout << "World loaded chunk" << std::endl;
+    push_constants.chunk_pos = ivec2(player_chunk_x, player_chunk_z);
 
     // chunk position (flat, no height)
 
     // populate chunk data
-    int num_solid_chuck = 0;
-    int chunk_data[384][16][16];
+    int chunk_data[NUM_CHUNKS_PER_AXIS][NUM_CHUNKS_PER_AXIS][384][16][16];
     std::memset(&chunk_data, 0, sizeof(chunk_data));
+    for (int dx = 0; dx < NUM_CHUNKS_PER_AXIS; dx++)
+        for (int dz = 0; dz < NUM_CHUNKS_PER_AXIS; dz++) {
+            int num_solid_chuck = 0;
 
-    for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
-        if (chunk->data.sections[section] == 0)
-            continue;
-        for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
-            for (int y = 0; y < CUNK_CHUNK_SIZE; y++)
-                for (int z = 0; z < CUNK_CHUNK_SIZE; z++) {
-                    int world_y = y + section * CUNK_CHUNK_SIZE;
-                    BlockData block_data =
-                        chunk->data.sections[section]->block_data[x][y][z];
-                    if (block_data != BlockAir) {
-                        chunk_data[world_y][x][z] = block_data;
-                    }
-                }
-    }
+            int cx = player_chunk_x + dx;
+            int cz = player_chunk_z + dz;
+            world.load_chunk(cx, cz);
+            auto chunk = world.get_loaded_chunk(cx, cz);
+            if (!chunk) {
+                std::cout << "Chunk at (" << cx << ", " << cz
+                          << ") is not loaded\n";
+                return 0;
+            }
 
-    std::cout << "Chunk data copied: " << num_solid_chuck << " / 98304"
-              << std::endl;
+            std::cout << "World loaded chunk at (" << cx << ", " << cz << ")\n";
+            for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT;
+                 section++) {
+                if (chunk->data.sections[section] == 0)
+                    continue;
+                for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
+                    for (int y = 0; y < CUNK_CHUNK_SIZE; y++)
+                        for (int z = 0; z < CUNK_CHUNK_SIZE; z++) {
+                            int world_y = y + section * CUNK_CHUNK_SIZE;
+                            BlockData block_data =
+                                chunk->data.sections[section]
+                                    ->block_data[y][z][x];
+                            if (block_data != BlockAir) {
+                                chunk_data[dx][dz][world_y][x][z] = block_data;
+                                num_solid_chuck++;
+                            }
+                        }
+            }
+            std::cout << "Chunk data copied: " << num_solid_chuck
+                      << " / 98304\n";
+        }
 
     std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
         device, sizeof(chunk_data),
