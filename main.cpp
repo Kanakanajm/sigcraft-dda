@@ -76,24 +76,13 @@ int main(int argc, char **argv) {
     auto world = World(argv[1]);
 
     const int radius = 1;
-
     const int grid_size = 2 * radius + 1;
-
     const int chunk_count = grid_size * grid_size;
 
-    GPUChunk gpu_chunks[chunk_count];
+    std::vector<GPUChunk> gpu_chunks;
+    gpu_chunks.resize(chunk_count);
 
-    VkDeviceSize chunk_bytes =
-        VkDeviceSize(chunk_count * 384 * 16 * 16);
-
-    std::cout << chunk_bytes << std::endl;
-
-    std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
-        device, chunk_bytes,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-
-    chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks);
+    VkDeviceSize chunk_bytes = VkDeviceSize(chunk_count * 384 * 16 * 16);
 
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
@@ -125,8 +114,6 @@ int main(int argc, char **argv) {
                         dst.data[Y][x][z] = sec->block_data[y][z][x];
                     }
         }
-
-        std::cout << "Uploaded chunk ("<<cx<<", "<< cz <<")" << std::endl;
     };
 
     auto &vk = device.dispatch;
@@ -212,6 +199,8 @@ int main(int argc, char **argv) {
                 push_constants.grid_size = grid_size;
                 push_constants.pos = camera.position;
                 push_constants.r = camera_to_world_rotation_matrix(&camera);
+
+                chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
 
                 vkCmdPushConstants(cmdbuf, dda_shader.layout(),
                                    VK_SHADER_STAGE_COMPUTE_BIT, 0,
