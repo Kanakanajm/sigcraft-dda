@@ -1,17 +1,14 @@
-#include "imr/imr.h"
-#include "imr/util.h"
+#include <cmath>
 #include <iostream>
 
-#include "chunk_mesh.h"
-#include "world.h"
-
-#include <cmath>
-
+#include "imr/imr.h"
+#include "imr/util.h"
 #include "nasl/nasl.h"
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
-#include "threadpool.h"
+#include "chunk_mesh.h"
+#include "world.h"
 
 using namespace nasl;
 
@@ -21,10 +18,8 @@ struct GPUChunk {
 
 struct PushConstants {
     VkDeviceAddress chunk_buffer;
-    uint32_t chunk_count;
-    int32_t min_cx;
-    int32_t min_cz;
-    uint32_t grid_w;
+    int chunk_count;
+    int grid_size;
     vec3 pos;
     mat4 r;
 } push_constants;
@@ -32,7 +27,7 @@ struct PushConstants {
 Camera camera = {.position =
                      {
                          0,
-                         0,
+                         150,
                          0,
                      },
                  .rotation = {0, 0},
@@ -55,14 +50,10 @@ struct Shaders {
     Shaders(imr::Device &d) : dda(d, "dda.spv") {}
 };
 
-int radius = 1;
-
 int main(int argc, char **argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     auto window = glfwCreateWindow(1024, 1024, "Example", nullptr, nullptr);
-
-    ThreadPool tp(std::thread::hardware_concurrency());
 
     if (argc < 2)
         return 0;
@@ -71,10 +62,10 @@ int main(int argc, char **argv) {
                                   int action, int mods) {
         if (key == GLFW_KEY_R && (mods & GLFW_MOD_CONTROL))
             reload_shaders = true;
-        if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
-            radius++;
-        if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
-            radius--;
+        // if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
+        //     radius++;
+        // if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
+        //     radius--;
     });
 
     imr::Context context;
@@ -83,6 +74,26 @@ int main(int argc, char **argv) {
     imr::FpsCounter fps_counter;
 
     auto world = World(argv[1]);
+
+    const int radius = 1;
+
+    const int grid_size = 2 * radius + 1;
+
+    const int chunk_count = grid_size * grid_size;
+
+    GPUChunk gpu_chunks[chunk_count];
+
+    VkDeviceSize chunk_bytes =
+        VkDeviceSize(chunk_count * 384 * 16 * 16);
+
+    std::cout << chunk_bytes << std::endl;
+
+    std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
+        device, chunk_bytes,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks);
 
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
@@ -95,7 +106,7 @@ int main(int argc, char **argv) {
             world.load_chunk(cx, cz);
     };
 
-    auto packChunk = [&](int cx, int cz, GPUChunk &dst) {
+    auto pack_chunk = [&](int cx, int cz, GPUChunk &dst) {
         std::memset(&dst, 0, sizeof(GPUChunk));
 
         auto ch = world.get_loaded_chunk(cx, cz);
@@ -111,9 +122,11 @@ int main(int argc, char **argv) {
                 for (unsigned int y = 0; y < CUNK_CHUNK_SIZE; ++y)
                     for (unsigned int z = 0; z < CUNK_CHUNK_SIZE; ++z) {
                         const unsigned int Y = y + s * CUNK_CHUNK_SIZE;
-                        dst.data[Y][x][z] = int(sec->block_data[x][y][z]);
+                        dst.data[Y][x][z] = sec->block_data[y][z][x];
                     }
         }
+
+        std::cout << "Uploaded chunk ("<<cx<<", "<< cz <<")" << std::endl;
     };
 
     auto &vk = device.dispatch;
@@ -126,9 +139,6 @@ int main(int argc, char **argv) {
                 camera_update(window, &camera_input);
                 camera_move_freelook(&camera, &camera_input, &camera_state,
                                      delta);
-
-                push_constants.pos = camera.position;
-                push_constants.r = camera_to_world_rotation_matrix(&camera);
 
                 if (reload_shaders) {
                     swapchain.drain();
@@ -170,52 +180,36 @@ int main(int argc, char **argv) {
                 shader_bind_helper->set_storage_image(0, 0, image);
                 shader_bind_helper->commit(cmdbuf);
 
-                const int gridW = 2 * radius + 1;
-                const int gridH = 2 * radius + 1;
-
                 const int player_chunk_x =
-                    0; // int(std::floor(camera.position.x / 16.0f));
+                    int(std::floor(camera.position.x / 16.0f));
                 const int player_chunk_z =
-                    0; // int(std::floor(camera.position.z / 16.0f));
-
-                const int min_cx = player_chunk_x - radius;
-                const int min_cz = player_chunk_z - radius;
-
-                const uint32_t chunk_count = gridW * gridH;
+                    int(std::floor(camera.position.z / 16.0f));
 
                 for (int dx = -radius; dx <= radius; ++dx)
                     for (int dz = -radius; dz <= radius; ++dz)
                         load_chunk(player_chunk_x + dx, player_chunk_z + dz);
 
-                std::vector<GPUChunk> gpu_chunks;
-                gpu_chunks.resize(chunk_count);
-
-                for (int gz = 0; gz < gridH; ++gz) {
-                    for (int gx = 0; gx < gridW; ++gx) {
-                        const int cx = min_cx + gx;
-                        const int cz = min_cz + gz;
-                        const size_t idx = size_t(gz) * gridW + gx;
-                        packChunk(cx, cz, gpu_chunks[idx]);
+                for (auto chunk : world.loaded_chunks()) {
+                    if (abs(chunk->cx - player_chunk_x) > radius ||
+                        abs(chunk->cz - player_chunk_z) > radius) {
+                        world.unload_chunk(chunk.get());
                     }
                 }
 
-                const VkDeviceSize chunk_bytes =
-                    VkDeviceSize(gpu_chunks.size()) * sizeof(GPUChunk);
+                int min_cx = player_chunk_x - radius;
+                int min_cz = player_chunk_z - radius;
 
-                std::unique_ptr<imr::Buffer> chunk_buffer =
-                    std::make_unique<imr::Buffer>(
-                        device, chunk_bytes,
-                        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-
-                chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
+                for (int gz = 0; gz < grid_size; ++gz) {
+                    for (int gx = 0; gx < grid_size; ++gx) {
+                        int cx = min_cx + gx;
+                        int cz = min_cz + gz;
+                        pack_chunk(cx, cz, gpu_chunks[gz * grid_size + gx]);
+                    }
+                }
 
                 push_constants.chunk_buffer = chunk_buffer->device_address();
                 push_constants.chunk_count = chunk_count;
-                push_constants.min_cx = min_cx;
-                push_constants.min_cz = min_cz;
-                push_constants.grid_w = gridW;
+                push_constants.grid_size = grid_size;
                 push_constants.pos = camera.position;
                 push_constants.r = camera_to_world_rotation_matrix(&camera);
 
@@ -225,9 +219,6 @@ int main(int argc, char **argv) {
 
                 vkCmdDispatch(cmdbuf, (image.size().width + 31) / 32,
                               (image.size().height + 31) / 32, 1);
-
-                context.addCleanupAction(
-                    [=, &device]() { delete shader_bind_helper; });
 
                 auto now = imr_get_time_nano();
                 delta = ((float)((now - prev_frame) / 1000L)) / 1000000.0f;
