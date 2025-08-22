@@ -19,7 +19,8 @@ struct GPUChunk {
 struct PushConstants {
     VkDeviceAddress chunk_buffer;
     int chunk_count;
-    int grid_size;
+    int radius;
+    ivec2 chunk_pos;
     vec3 pos;
     mat4 r;
 } push_constants;
@@ -75,7 +76,7 @@ int main(int argc, char **argv) {
 
     auto world = World(argv[1]);
 
-    const int radius = 1;
+    const int radius = 4;
     const int grid_size = 2 * radius + 1;
     const int chunk_count = grid_size * grid_size;
 
@@ -83,6 +84,11 @@ int main(int argc, char **argv) {
     gpu_chunks.resize(chunk_count);
 
     VkDeviceSize chunk_bytes = VkDeviceSize(chunk_count * 384 * 16 * 16);
+
+    std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
+        device, chunk_bytes,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
@@ -167,10 +173,10 @@ int main(int argc, char **argv) {
                 shader_bind_helper->set_storage_image(0, 0, image);
                 shader_bind_helper->commit(cmdbuf);
 
-                const int player_chunk_x =
-                    int(std::floor(camera.position.x / 16.0f));
-                const int player_chunk_z =
-                    int(std::floor(camera.position.z / 16.0f));
+                int player_chunk_x = int(std::floor(camera.position.x / 16.0f));
+                int player_chunk_z = int(std::floor(camera.position.z / 16.0f));
+
+                ivec2 chunk_pos = ivec2(player_chunk_x, player_chunk_z);
 
                 for (int dx = -radius; dx <= radius; ++dx)
                     for (int dz = -radius; dz <= radius; ++dz)
@@ -193,14 +199,15 @@ int main(int argc, char **argv) {
                         pack_chunk(cx, cz, gpu_chunks[gz * grid_size + gx]);
                     }
                 }
+                
+                chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
 
                 push_constants.chunk_buffer = chunk_buffer->device_address();
                 push_constants.chunk_count = chunk_count;
-                push_constants.grid_size = grid_size;
+                push_constants.radius = radius;
+                push_constants.chunk_pos = chunk_pos;
                 push_constants.pos = camera.position;
                 push_constants.r = camera_to_world_rotation_matrix(&camera);
-
-                chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
 
                 vkCmdPushConstants(cmdbuf, dda_shader.layout(),
                                    VK_SHADER_STAGE_COMPUTE_BIT, 0,
