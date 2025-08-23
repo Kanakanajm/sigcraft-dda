@@ -14,7 +14,9 @@
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
-#define NUM_CHUNKS_PER_AXIS 3
+#define RADIUS 1
+#define NUM_CHUNKS_PER_AXIS (2 * RADIUS + 1)
+#define NUM_CHUNKS NUM_CHUNKS_PER_AXIS * NUM_CHUNKS_PER_AXIS
 
 using namespace nasl;
 
@@ -107,10 +109,10 @@ int main(int argc, char **argv) {
     // chunk position (flat, no height)
 
     // populate chunk data
-    int chunk_data[NUM_CHUNKS_PER_AXIS][NUM_CHUNKS_PER_AXIS][384][16][16];
+    int chunk_data[NUM_CHUNKS][384][16][16];
     std::memset(&chunk_data, 0, sizeof(chunk_data));
-    for (int dx = 0; dx < NUM_CHUNKS_PER_AXIS; dx++)
-        for (int dz = 0; dz < NUM_CHUNKS_PER_AXIS; dz++) {
+    for (int dx = -RADIUS; dx < RADIUS; dx++)
+        for (int dz = -RADIUS; dz < RADIUS; dz++) {
             int num_solid_chuck = 0;
 
             int cx = player_chunk_x + dx;
@@ -136,7 +138,7 @@ int main(int argc, char **argv) {
                                 chunk->data.sections[section]
                                     ->block_data[y][z][x];
                             if (block_data != BlockAir) {
-                                chunk_data[dx][dz][world_y][x][z] = block_data;
+                                chunk_data[(dx + RADIUS) * NUM_CHUNKS_PER_AXIS + (dz + RADIUS)][world_y][x][z] = block_data;
                                 num_solid_chuck++;
                             }
                         }

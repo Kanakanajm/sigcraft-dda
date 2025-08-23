@@ -4,7 +4,9 @@
 #extension GL_EXT_buffer_reference : require
 
 #define MAX_STEP 100
-#define NUM_CHUNKS_PER_AXIS 3
+#define RADIUS 1
+#define NUM_CHUNKS_PER_AXIS 2 * RADIUS + 1
+#define NUM_CHUNKS NUM_CHUNKS_PER_AXIS * NUM_CHUNKS_PER_AXIS
 #define MAX_XZ NUM_CHUNKS_PER_AXIS * 16 - 1
 #define EPSILON 1e-10
 
@@ -20,7 +22,7 @@ layout(set = 0, binding = 0) uniform image2D renderTarget;
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
 layout(scalar, buffer_reference) buffer ChuckBuffer {
-    int data[NUM_CHUNKS_PER_AXIS][NUM_CHUNKS_PER_AXIS][384][16][16];
+    int data[NUM_CHUNKS][384][16][16];
     // int data[NUM_CHUNKS_PER_AXIS * 2][384][16][16];
 };
 
@@ -73,7 +75,7 @@ bool isBlock(ivec3 m) {
     return cx >= 0 && cx < NUM_CHUNKS_PER_AXIS && cz >= 0 &&
            cz < NUM_CHUNKS_PER_AXIS && x >= 0 && x < 16 && z >= 0 && z < 16 &&
            m.y >= 0 && m.y < 384 &&
-           push_constants.chuck_buffer.data[cx][cz][m.y][x][z] > 0;
+           push_constants.chuck_buffer.data[cx * NUM_CHUNKS_PER_AXIS + cz][m.y][x][z] > 0;
 }
 
 vec4 blockColor(ivec3 m) {
@@ -82,7 +84,7 @@ vec4 blockColor(ivec3 m) {
     int cz = m.z / 16;
     int z = m.z - cz * 16;
 
-    int b = push_constants.chuck_buffer.data[cx][cz][m.y][x][z];
+    int b = push_constants.chuck_buffer.data[cx * NUM_CHUNKS_PER_AXIS + cz][m.y][x][z];
     vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
     if (b >= 0 && b < 14)
         c = color_palette[b];
@@ -115,7 +117,7 @@ void main() {
         return;
     } else {
         // teleport the ray origin onto the AABB
-        pos = pos + ray_dir * (aabb_t - 1); // -1 fixed but why
+        // pos = pos + ray_dir * (aabb_t - 1); // -1 fixed but why
     }
 
     // block on map
