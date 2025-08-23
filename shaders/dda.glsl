@@ -18,9 +18,8 @@ layout(scalar, buffer_reference) buffer ChunkBuffer {
 
 layout(scalar, push_constant) uniform PushConstants {
     ChunkBuffer chunk_buffer;
-    int         chunk_count;
-    int         render_radius;
     ivec2       chunk_center;
+    int         render_radius;
     vec3        camera_position;
     mat4        camera_rotation;
 } pc;
@@ -40,7 +39,7 @@ bool get_chunk_index_and_local_coords(ivec3 world_block_pos, out uint chunk_inde
         return false;
 
     chunk_index = uint(grid_z * (2 * pc.render_radius + 1) + grid_x);
-    if (chunk_index >= pc.chunk_count)
+    if (chunk_index >= (2 * pc.render_radius + 1) * (2 * pc.render_radius + 1))
         return false;
 
     int local_x = int(mod(float(world_block_pos.x), 16.0));
@@ -89,24 +88,24 @@ vec4 get_block_color(ivec3 world_block_pos) {
 void main() {
     ivec2 image_size_px = imageSize(output_image);
     float aspect_ratio = image_size_px.x / float(image_size_px.y);
-
-    // start at world voxel containing camera
-    ivec3 current_block = ivec3(floor(pc.camera_position));
-
+    
     // do the ndc and get ray
     vec2 screen_uv = (2.0 * gl_GlobalInvocationID.xy / vec2(image_size_px)) - 1.0;
     screen_uv.x *= aspect_ratio;
     screen_uv.y = -screen_uv.y;
-
+    
     vec4 ray_direction_clip = vec4(screen_uv.x, screen_uv.y, -1.0, 0.0);
     vec4 ray_direction_world = normalize(pc.camera_rotation * ray_direction_clip);
     vec3 ray_dir = ray_direction_world.xyz;
+    
+    // start at world voxel containing camera
+    ivec3 current_block = ivec3(floor(pc.camera_position));
 
     // DDA setup
     vec3 delta_distance = abs(1.0 / ray_dir);
     ivec3 step_direction = ivec3(sign(ray_dir));
     vec3 side_distance = (sign(ray_dir) * (vec3(current_block) - pc.camera_position) + (sign(ray_dir) * 0.5) + 0.5) * delta_distance;
-
+    
     bool hit = false;
     bvec3 hit_normal_mask = bvec3(false, true, false);
 
