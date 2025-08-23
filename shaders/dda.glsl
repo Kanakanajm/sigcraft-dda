@@ -109,16 +109,16 @@ void main() {
     vec3 ray_dir = d_prime.xyz;
     vec3 inv_ray_dir = 1 / ray_dir;
 
-    float aabb_t = 0;
-    bool aabb_its = slab(pos, inv_ray_dir, aabb_t);
+    // float aabb_t = 0;
+    // bool aabb_its = slab(pos, inv_ray_dir, aabb_t);
 
-    // check if hit bounding box
-    if (!aabb_its) {
-        return;
-    } else {
-        // teleport the ray origin onto the AABB
-        // pos = pos + ray_dir * (aabb_t - 1); // -1 fixed but why
-    }
+    // // check if hit bounding box
+    // if (!aabb_its) {
+    //     return;
+    // } else {
+    //     // teleport the ray origin onto the AABB
+    //     // pos = pos + ray_dir * (aabb_t - 1); // -1 fixed but why
+    // }
 
     // block on map
     ivec3 map = ivec3(floor(pos));

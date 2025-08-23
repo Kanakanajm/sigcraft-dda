@@ -111,8 +111,8 @@ int main(int argc, char **argv) {
     // populate chunk data
     int chunk_data[NUM_CHUNKS][384][16][16];
     std::memset(&chunk_data, 0, sizeof(chunk_data));
-    for (int dx = -RADIUS; dx < RADIUS; dx++)
-        for (int dz = -RADIUS; dz < RADIUS; dz++) {
+    for (int dx = -RADIUS; dx <= RADIUS; dx++)
+        for (int dz = -RADIUS; dz <= RADIUS; dz++) {
             int num_solid_chuck = 0;
 
             int cx = player_chunk_x + dx;
