@@ -14,7 +14,7 @@
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
-#define NUM_CHUNKS_PER_AXIS 5
+#define NUM_CHUNKS_PER_AXIS 3
 
 using namespace nasl;
 
@@ -141,6 +141,7 @@ int main(int argc, char **argv) {
                             }
                         }
             }
+
             std::cout << "Chunk data copied: " << num_solid_chuck
                       << " / 98304\n";
         }
