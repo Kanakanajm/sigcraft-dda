@@ -3,7 +3,7 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
 
-#define MAX_STEP 500
+#define MAX_STEP 100
 #define NUM_CHUNKS_PER_AXIS 3
 #define MAX_XZ NUM_CHUNKS_PER_AXIS * 16 - 1
 #define EPSILON 1e-10
@@ -112,12 +112,10 @@ void main() {
 
     // check if hit bounding box
     if (!aabb_its) {
-        imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy),
-                   vec4(0, 0, 0, 1));
         return;
     } else {
         // teleport the ray origin onto the AABB
-        pos = pos + ray_dir * aabb_t;
+        pos = pos + ray_dir * (aabb_t - 1); // -1 fixed but why
     }
 
     // block on map
