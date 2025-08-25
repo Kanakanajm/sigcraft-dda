@@ -15,7 +15,7 @@
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
-#define NUM_CHUNKS 3
+#define NUM_CHUNKS 25
 #define NUM_BLOCK_PER_CHUNK                                                    \
     CUNK_CHUNK_SIZE *CUNK_CHUNK_MAX_HEIGHT *CUNK_CHUNK_SIZE
 
@@ -73,6 +73,20 @@ vec3 parseVec3(const std::string &input) {
     return vec3(values[0], values[1], values[2]);
 }
 
+std::string print_vec3(const vec3 &v) {
+    return std::format("({:.2f}, {:.2f}, {:.2f})", v[0], v[1], v[2]);
+}
+
+void updateDebugGlfwWindowTitle(GLFWwindow *window, int fps,
+                                const Camera &camera) {
+    glfwSetWindowTitle(window,
+                       std::format("{}fps, {}, Y{:.2f}°, P{:.2f}°", fps,
+                                   print_vec3(camera.position),
+                                   camera.rotation.yaw * 180.0f / M_PI,
+                                   camera.rotation.pitch * 180.0f / M_PI)
+                           .c_str());
+}
+
 int main(int argc, char **argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -98,15 +112,15 @@ int main(int argc, char **argv) {
     int player_chunk_z = camera.position.z / 16;
 
     // chunk positions (flat, no height)
-    ivec2 chunk_indices[NUM_CHUNKS] = {ivec2(0, 0), ivec2(2, 0), ivec2(0, 2)};
-    // for (int i = 0; i < NUM_CHUNKS; i++) {
-    //     if (i % 2 == 0) {
-    //         chunk_indices[i] = ivec2(0, 2 * i + 1);
+    ivec2 chunk_indices[NUM_CHUNKS] = {};
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+        if (i % 2 == 0) {
+            chunk_indices[i] = ivec2(0, 2 * i + 1);
 
-    //     } else {
-    //         chunk_indices[i] = ivec2(2 * i + 1, 0);
-    //     }
-    // }
+        } else {
+            chunk_indices[i] = ivec2(2 * i + 1, 0);
+        }
+    }
 
     int(*chunk_ptrs[NUM_CHUNKS])[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT]
                                 [CUNK_CHUNK_SIZE];
@@ -174,17 +188,15 @@ int main(int argc, char **argv) {
 
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
-        fps_counter.updateGlfwWindowTitle(window);
+        camera_update(window, &camera_input);
+        camera_move_freelook(&camera, &camera_input, &camera_state, delta);
+        push_constants_its.pos = camera.position;
+        push_constants_its.r = camera_to_world_rotation_matrix(&camera);
+
+        updateDebugGlfwWindowTitle(window, fps_counter.average_fps(), camera);
 
         swapchain.renderFrameSimplified(
             [&](imr::Swapchain::SimplifiedRenderContext &context) {
-                camera_update(window, &camera_input);
-                camera_move_freelook(&camera, &camera_input, &camera_state,
-                                     delta);
-
-                push_constants_its.pos = camera.position;
-                push_constants_its.r = camera_to_world_rotation_matrix(&camera);
-
                 auto &image = context.image();
                 auto cmdbuf = context.cmdbuf();
 

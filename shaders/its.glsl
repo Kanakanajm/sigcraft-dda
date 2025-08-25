@@ -8,7 +8,7 @@
 #extension GL_EXT_buffer_reference : require
 
 #define EPSILON 1e-10
-#define NUM_CHUNKS 3
+#define NUM_CHUNKS 25
 #define CUNK_CHUNK_SIZE 16
 #define CUNK_CHUNK_MAX_HEIGHT 384
 
@@ -57,7 +57,7 @@ bool slab(ivec2 c_idx, vec3 o, vec3 inv_d, out float t) {
 
 vec4 aabb_debug_color_palette(ivec2 chunk_idx) {
     if (chunk_idx.x == 0) {
-        return vec4(1, 0, 0, 1);
+        return vec4(1, mod(chunk_idx.y, 3), 0, 1);
     }
     if (chunk_idx.y == 0) {
         return vec4(0, 0, 1, 1);
@@ -75,14 +75,17 @@ void main() {
     screen.y = -screen.y;
 
     vec4 d = vec4(screen.x, screen.y, -1, 0);
+
     vec4 d_prime = normalize(push_constants.r * d);
 
     vec3 ray_dir = d_prime.xyz;
+
     vec3 inv_ray_dir = 1 / ray_dir;
 
     float t_closest = 1 / 0.0; // +inf
     int idx_closest = -1;
     vec4 c = vec4(0);
+    ivec2 chunk_indices;
     for (int i = 0; i < NUM_CHUNKS; i++) {
         float t_aabb = 0;
         bool its = slab(push_constants.chunk_indices[i], push_constants.pos,
@@ -91,12 +94,17 @@ void main() {
         if (its && t_aabb <= t_closest) {
             t_closest = t_aabb;
             idx_closest = i;
+            chunk_indices = push_constants.chunk_indices[i];
         }
     }
 
     if (idx_closest >= 0) {
         imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy),
-                   aabb_debug_color_palette(
-                       push_constants.chunk_indices[idx_closest]));
+                   aabb_debug_color_palette(chunk_indices));
+
+        // previously push_constants is accessed non-uniformly
+        // (different idx_closest)
+        // imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy),
+        //            aabb_debug_color_palette(push_constants.chunk_indices[idx_closest]));
     }
 }
