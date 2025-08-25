@@ -18,6 +18,9 @@ add_subdirectory(enklume)
 add_executable(sigcraft main.cpp camera.cpp chunk_mesh.cpp world.cpp)
 target_link_libraries(sigcraft imr enklume nasl::nasl)
 
+add_custom_target(its_spv COMMAND ${GLSLANG_EXE} -V -S comp ${CMAKE_CURRENT_SOURCE_DIR}/shaders/its.glsl -o ${CMAKE_CURRENT_BINARY_DIR}/its.spv)
+add_dependencies(sigcraft its_spv)
+
 add_custom_target(dda_spv COMMAND ${GLSLANG_EXE} -V -S comp ${CMAKE_CURRENT_SOURCE_DIR}/shaders/dda.glsl -o ${CMAKE_CURRENT_BINARY_DIR}/dda.spv)
 add_dependencies(sigcraft dda_spv)
 

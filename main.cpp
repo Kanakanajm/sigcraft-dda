@@ -1,3 +1,4 @@
+#include <format>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -14,29 +15,23 @@
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
-#define NUM_CHUNKS_PER_AXIS 3
+#define NUM_CHUNKS 3
+#define NUM_BLOCK_PER_CHUNK                                                    \
+    CUNK_CHUNK_SIZE *CUNK_CHUNK_MAX_HEIGHT *CUNK_CHUNK_SIZE
 
 using namespace nasl;
 
 struct {
     VkDeviceAddress chunk_buffer;
-    ivec2 chunk_pos;
-    mat4 m;
-    float fov;
-    vec4 color_palette[14] = {
-        {0.0, 0.0, 0.0, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.25, 0.25, 0, 1.0},
-        {0.2, 0.8, 0.1, 1.0}, {0.2, 0.9, 0.1, 1.0}, {0.8, 0.8, 0.0, 1.0},
-        {0.9, 0.9, 0.9, 1.0}, {0.8, 0.5, 0.0, 1.0}, {0.0, 0.2, 0.8, 1.0},
-        {0.1, 0.4, 0.1, 1.0}, {0.3, 0.1, 0.0, 1.0}, {1.0, 1.0, 1.0, 1.0},
-        {1.0, 0.2, 0.0, 1.0}, {1.0, 0.0, 1.0, 1.0}};
-} push_constants_old;
+    vec3 pos;
+    vec3 dir;
+} push_constants_dda;
 
 struct {
-    VkDeviceAddress chunk_buffer;
-    ivec2 chunk_pos;
+    ivec2 chunk_indices[NUM_CHUNKS];
     vec3 pos;
     mat4 r;
-} push_constants;
+} push_constants_its;
 
 Camera camera = {.position =
                      {
@@ -44,8 +39,9 @@ Camera camera = {.position =
                          128,
                          32,
                      },
-                 .rotation = {0, 1.5708},
+                 .rotation = {0, M_PI_2},
                  .fov = 60};
+
 CameraFreelookState camera_state = {
     .fly_speed = 100.0f,
     .mouse_sensitivity = 1,
@@ -55,12 +51,11 @@ CameraInput camera_input;
 void camera_update(GLFWwindow *, CameraInput *input);
 
 struct Shaders {
+    imr::ComputePipeline its;
     imr::ComputePipeline dda;
 
-    Shaders(imr::Device &d) : dda(d, "dda.spv") {}
+    Shaders(imr::Device &d) : its(d, "its.spv"), dda(d, "dda.spv") {}
 };
-
-int radius = 16;
 
 vec3 parseVec3(const std::string &input) {
     std::stringstream ss(input);
@@ -102,60 +97,76 @@ int main(int argc, char **argv) {
     int player_chunk_x = camera.position.x / 16;
     int player_chunk_z = camera.position.z / 16;
 
-    push_constants.chunk_pos = ivec2(player_chunk_x, player_chunk_z);
+    // chunk positions (flat, no height)
+    ivec2 chunk_indices[NUM_CHUNKS] = {ivec2(0, 0), ivec2(2, 0), ivec2(0, 2)};
+    // for (int i = 0; i < NUM_CHUNKS; i++) {
+    //     if (i % 2 == 0) {
+    //         chunk_indices[i] = ivec2(0, 2 * i + 1);
 
-    // chunk position (flat, no height)
+    //     } else {
+    //         chunk_indices[i] = ivec2(2 * i + 1, 0);
+    //     }
+    // }
 
-    // populate chunk data
-    int chunk_data[NUM_CHUNKS_PER_AXIS][NUM_CHUNKS_PER_AXIS][384][16][16];
-    std::memset(&chunk_data, 0, sizeof(chunk_data));
-    for (int dx = 0; dx < NUM_CHUNKS_PER_AXIS; dx++)
-        for (int dz = 0; dz < NUM_CHUNKS_PER_AXIS; dz++) {
-            int num_solid_chuck = 0;
+    int(*chunk_ptrs[NUM_CHUNKS])[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT]
+                                [CUNK_CHUNK_SIZE];
 
-            int cx = player_chunk_x + dx;
-            int cz = player_chunk_z + dz;
-            world.load_chunk(cx, cz);
-            auto chunk = world.get_loaded_chunk(cx, cz);
-            if (!chunk) {
-                std::cout << "Chunk at (" << cx << ", " << cz
-                          << ") is not loaded\n";
-                return 0;
-            }
+    VkDeviceAddress buffer_addresses[NUM_CHUNKS];
 
-            std::cout << "World loaded chunk at (" << cx << ", " << cz << ")\n";
-            for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT;
-                 section++) {
-                if (chunk->data.sections[section] == 0)
+    auto pack_chunk = [&world, &chunk_ptrs, &device, &chunk_indices,
+                       &buffer_addresses](int cx, int cz, int idx) {
+        std::cout << std::format("Loading Chunk ({}, {})\n", cx, cz);
+        world.load_chunk(cx, cz);
+        Chunk *chunk = world.get_loaded_chunk(cx, cz);
+        if (chunk == nullptr) {
+            std::cout << "\tFailed to Load!\n";
+            chunk_ptrs[idx] = nullptr;
+        } else {
+            int chunk_data[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT]
+                          [CUNK_CHUNK_SIZE] = {};
+            int num_solid_block = 0;
+            for (int s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
+                if (chunk->data.sections[s] == nullptr)
                     continue;
+
                 for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
-                    for (int y = 0; y < CUNK_CHUNK_SIZE; y++)
+                    for (int ys = 0; ys < CUNK_CHUNK_SIZE; ys++)
                         for (int z = 0; z < CUNK_CHUNK_SIZE; z++) {
-                            int world_y = y + section * CUNK_CHUNK_SIZE;
-                            BlockData block_data =
-                                chunk->data.sections[section]
-                                    ->block_data[y][z][x];
-                            if (block_data != BlockAir) {
-                                chunk_data[dx][dz][world_y][x][z] = block_data;
-                                num_solid_chuck++;
+                            BlockData block =
+                                chunk->data.sections[s]->block_data[ys][z][x];
+                            if (block != BlockAir) {
+                                int y = ys + s * CUNK_CHUNK_SIZE;
+                                chunk_data[x][y][z] = block;
+                                num_solid_block++;
                             }
                         }
             }
 
-            std::cout << "Chunk data copied: " << num_solid_chuck
-                      << " / 98304\n";
+            std::cout << std::format(
+                "\tBlock stats: {:d} ({:.2f}\% full)\n", num_solid_block,
+                num_solid_block / float(NUM_BLOCK_PER_CHUNK));
+
+            // Upload chunk data to GPU
+
+            std::unique_ptr<imr::Buffer> chunk_buffer =
+                std::make_unique<imr::Buffer>(
+                    device, sizeof(chunk_data),
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+            chunk_buffer->uploadDataSync(0, chunk_buffer->size, chunk_data);
+
+            buffer_addresses[idx] = chunk_buffer->device_address();
+
+            push_constants_its.chunk_indices[idx] = chunk_indices[idx];
+            std::cout << "\tUploaded to GPU\n";
         }
+    };
 
-    std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
-        device, sizeof(chunk_data),
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-
-    // load chunk into buffer
-    chunk_buffer->uploadDataSync(0, chunk_buffer->size, chunk_data);
-    push_constants.chunk_buffer = chunk_buffer->device_address();
-
-    std::cout << "Chunk loaded." << std::endl;
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+        pack_chunk(chunk_indices[i][0], chunk_indices[i][1], i);
+    }
 
     auto shaders = std::make_unique<Shaders>(device);
 
@@ -171,8 +182,8 @@ int main(int argc, char **argv) {
                 camera_move_freelook(&camera, &camera_input, &camera_state,
                                      delta);
 
-                push_constants.pos = camera.position;
-                push_constants.r = camera_to_world_rotation_matrix(&camera);
+                push_constants_its.pos = camera.position;
+                push_constants_its.r = camera_to_world_rotation_matrix(&camera);
 
                 auto &image = context.image();
                 auto cmdbuf = context.cmdbuf();
@@ -200,17 +211,17 @@ int main(int argc, char **argv) {
                                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                         })}));
 
-                auto &dda_shader = shaders->dda;
+                auto &its_shader = shaders->its;
                 vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                  dda_shader.pipeline());
+                                  its_shader.pipeline());
 
-                auto shader_bind_helper = dda_shader.create_bind_helper();
+                auto shader_bind_helper = its_shader.create_bind_helper();
                 shader_bind_helper->set_storage_image(0, 0, image);
                 shader_bind_helper->commit(cmdbuf);
 
-                vkCmdPushConstants(cmdbuf, dda_shader.layout(),
-                                   VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                                   sizeof(push_constants), &push_constants);
+                vkCmdPushConstants(
+                    cmdbuf, its_shader.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                    sizeof(push_constants_its), &push_constants_its);
 
                 // render only one chunk
 
