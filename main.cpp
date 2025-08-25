@@ -75,14 +75,14 @@ int main(int argc, char **argv) {
 
     auto world = World(argv[1]);
 
-    const int radius = 1;
+    const int radius = 6;
     const int grid_size = 2 * radius + 1;
     const int chunk_count = grid_size * grid_size;
 
     std::vector<GPUChunk> gpu_chunks;
     gpu_chunks.resize(chunk_count);
 
-    VkDeviceSize chunk_bytes = VkDeviceSize(chunk_count * 384 * 16 * 16);
+    VkDeviceSize chunk_bytes = VkDeviceSize(chunk_count * sizeof(GPUChunk));
 
     std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
         device, chunk_bytes,
@@ -202,12 +202,7 @@ int main(int argc, char **argv) {
                         int cx = min_cx + dx;
                         int cz = min_cz + dz;
                         load_chunk(cx, cz);
-                        std::cout << "Loaded chunk: (" << cx << ", " << cz
-                                  << ")\n";
                         pack_chunk(cx, cz, gpu_chunks[dz * grid_size + dx]);
-                        std::cout << "Packed chunk: (" << cx << ", " << cz
-                                  << ") at GPU chunk buffer index"
-                                  << dx * grid_size + dz << "\n";
                     }
 
                 chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
