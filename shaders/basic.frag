@@ -3,8 +3,114 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
 
-layout(location = 0) in vec3 color;
+#define MAX_STEP 100
+#define CUNK_CHUNK_SIZE 16
+#define CUNK_CHUNK_MAX_HEIGHT 384
 
 layout(location = 0) out vec4 colorOut;
 
-void main() { colorOut = vec4(color, 1); }
+layout(scalar, buffer_reference) buffer VertexBuffer {
+    vec3 vertices[36];
+    vec3 vertexColors[36];
+};
+layout(scalar, buffer_reference) buffer ChunkBuffer {
+    int block_data[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE];
+};
+
+layout(scalar, push_constant) uniform T {
+    VertexBuffer vertex_buffer;
+    ChunkBuffer chunk_buffer;
+    ivec3 chunk_position;
+    mat4 matrix;
+    mat4 inv_matrix;
+    vec3 camera_pos;
+}
+push_constants;
+
+vec4 color_palette[14] = {
+    {0.0, 0.0, 0.0, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.25, 0.25, 0, 1.0},
+    {0.2, 0.8, 0.1, 1.0}, {0.2, 0.9, 0.1, 1.0}, {0.8, 0.8, 0.0, 1.0},
+    {0.9, 0.9, 0.9, 1.0}, {0.8, 0.5, 0.0, 1.0}, {0.0, 0.2, 0.8, 1.0},
+    {0.1, 0.4, 0.1, 1.0}, {0.3, 0.1, 0.0, 1.0}, {1.0, 1.0, 1.0, 1.0},
+    {1.0, 0.2, 0.0, 1.0}, {1.0, 0.0, 1.0, 1.0}};
+
+bool isBlock(ivec3 m) {
+    return m.x >= 0 && m.x < CUNK_CHUNK_SIZE && m.y >= 0 &&
+           m.y < CUNK_CHUNK_MAX_HEIGHT && m.z >= 0 && m.z < CUNK_CHUNK_SIZE &&
+           push_constants.chunk_buffer.block_data[m.x][m.y][m.z] > 0;
+}
+
+vec4 blockColor(ivec3 m) {
+    vec4 c = vec4(0);
+    int b = push_constants.chunk_buffer.block_data[m.x][m.y][m.z];
+    if (b > 0 && b < 14) {
+        c = color_palette[b];
+    }
+    return c;
+}
+
+void main() {
+    vec3 pos = push_constants.camera_pos;
+
+    // world to local chunk coord
+    pos = pos - push_constants.chunk_position;
+
+    vec4 dir_aff =
+        normalize(push_constants.inv_matrix * vec4(gl_FragCoord.xy, -1, 0));
+    vec3 dir = dir_aff.xyz;
+
+    // block indices on map
+    ivec3 map = ivec3(floor(pos));
+
+    vec3 deltaDist = abs(1 / dir);
+
+    ivec3 rayStep = ivec3(sign(dir));
+    vec3 sideDist =
+        (sign(dir) * (vec3(map) - pos) + (sign(dir) * 0.5) + 0.5) * deltaDist;
+
+    bvec3 mask = bvec3(false, true, false);
+
+    // perform DDA
+    for (int i = 0; i < MAX_STEP; i++) {
+
+        // if hit block
+        if (isBlock(map)) {
+            vec4 color;
+            // fake shadow on sides
+            if (mask.x) {
+                color = vec4(0.5);
+            }
+            if (mask.y) {
+                color = vec4(1.0);
+            }
+            if (mask.z) {
+                color = vec4(0.75);
+            }
+
+            // mix shadow color with block color
+            colorOut = color * blockColor(map);
+        }
+
+        if (sideDist.x < sideDist.y) {
+            if (sideDist.x < sideDist.z) {
+                sideDist.x += deltaDist.x;
+                map.x += rayStep.x;
+                mask = bvec3(true, false, false);
+            } else {
+                sideDist.z += deltaDist.z;
+                map.z += rayStep.z;
+                mask = bvec3(false, false, true);
+            }
+        } else {
+            if (sideDist.y < sideDist.z) {
+                sideDist.y += deltaDist.y;
+                map.y += rayStep.y;
+                mask = bvec3(false, true, false);
+            } else {
+                sideDist.z += deltaDist.z;
+                map.z += rayStep.z;
+                mask = bvec3(false, false, true);
+            }
+        }
+    }
+}
