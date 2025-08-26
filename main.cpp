@@ -206,8 +206,6 @@ int main(int argc, char **argv) {
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-    std::vector<ivec2> chunk_locas;
-
     // Chunk cube are the same for every chunk, the only thing differs is the
     // transformation that will be passed into vertex shader as (transformation)
     // matrix
@@ -356,13 +354,6 @@ int main(int argc, char **argv) {
                                 world.load_chunk(cx, cz);
                         };
 
-                        auto pack_chunk = [&](int cx, int cz) {
-                            auto ch = world.get_loaded_chunk(cx, cz);
-                            if (!ch)
-                                return;
-                            chunk_locas.push_back(ivec2(cx, cz));
-                        };
-
                         /*
                         00 01 02
                         10 11 12
@@ -372,12 +363,15 @@ int main(int argc, char **argv) {
                         int min_cx = player_chunk_x - radius;
                         int min_cz = player_chunk_z - radius;
 
+                        std::vector<ivec2> chunk_locas;
                         for (int dx = 0; dx < grid_size; ++dx) {
                             for (int dz = 0; dz < grid_size; ++dz) {
                                 int cx = min_cx + dx;
                                 int cz = min_cz + dz;
                                 load_chunk(cx, cz);
-                                pack_chunk(cx, cz);
+                                auto ch = world.get_loaded_chunk(cx, cz);
+                                if (ch)
+                                    chunk_locas.push_back(ivec2(cx, cz));
                             }
                         }
 
