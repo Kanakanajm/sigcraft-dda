@@ -39,8 +39,9 @@ push_constants;
 
 struct ChunkIntersection {
     float t;
-    ivec2 index;
-}
+    bool its;
+    int i;
+};
 
 vec4 color_palette[14] = {
     {0.0, 0.0, 0.0, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.25, 0.25, 0, 1.0},
@@ -184,35 +185,55 @@ void main() {
 
     vec3 inv_ray_dir = 1 / ray_dir;
 
-    float t_closest = 1 / 0.0; // +inf
-    int idx_closest = -1;
-    vec4 c_closest = vec4(0);
+    // collision test
+    ChunkIntersection isecs[NUM_CHUNKS];
     for (int i = 0; i < NUM_CHUNKS; i++) {
-        float t_aabb = 0;
+        float t_aabb = 1 / 0.0;
         bool its = slab(push_constants.chunk_indicies_buffer.indices[i],
                         push_constants.pos, inv_ray_dir, t_aabb);
+        isecs[i] = ChunkIntersection(t_aabb, its, i);
+    }
 
-        if (its) {
+    // sort collision test result
+    bool swapped;
+    for (int i = 0; i < NUM_CHUNKS - 1; i++) {
+        swapped = false;
+        for (int j = 0; j < NUM_CHUNKS - i - 1; j++) {
+            if (isecs[j].t > isecs[j + 1].t) {
+                ChunkIntersection tmp = isecs[j];
+                isecs[j] = isecs[j + 1];
+                isecs[j + 1] = tmp;
+                swapped = true;
+            }
+        }
+
+        // If no two elements were swapped, then break
+        if (!swapped)
+            break;
+    }
+
+    // draw with dda
+    for (int i = 0; i < NUM_CHUNKS; i++) {
+        if (isecs[i].its) {
             vec3 pos = push_constants.pos;
-            ivec2 chunk_idx = push_constants.chunk_indicies_buffer.indices[i];
+            ivec2 chunk_idx =
+                push_constants.chunk_indicies_buffer.indices[isecs[i].i];
 
             // project pos to chunk (intersection) surface
-            pos = pos + ray_dir * (t_aabb + 1e-4);
+            pos = pos + ray_dir * (isecs[i].t + 1e-4);
 
             // world to chunk/object space
             pos = pos + vec3(-chunk_idx.x * CUNK_CHUNK_SIZE, 0,
                              -chunk_idx.y * CUNK_CHUNK_SIZE);
 
             vec4 c = vec4(0);
-            bool dda_its = dda(pos, ray_dir, i, c);
-            if (dda_its && t_aabb <= t_closest) {
-                t_closest = t_aabb;
-                c_closest = c;
+            bool dda_its = dda(pos, ray_dir, isecs[i].i, c);
+            if (dda_its) {
+                imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy), c);
+                break;
             }
         }
     }
-
-    imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy), c_closest);
 
     // if (idx_closest >= 0) {
 
