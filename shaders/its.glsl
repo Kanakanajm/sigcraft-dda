@@ -7,8 +7,9 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
 
+#define MAX_STEP 100
 #define EPSILON 1e-10
-#define NUM_CHUNKS 25
+#define NUM_CHUNKS 1089
 #define CUNK_CHUNK_SIZE 16
 #define CUNK_CHUNK_MAX_HEIGHT 384
 
@@ -16,12 +17,37 @@ layout(set = 0, binding = 0) uniform image2D renderTarget;
 
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
+layout(scalar, buffer_reference) buffer ChunkIndicesBuffer {
+    ivec2 indices[NUM_CHUNKS];
+};
+
+struct Chunk {
+    int blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE];
+};
+
+layout(scalar, buffer_reference) buffer ChunkBuffer {
+    Chunk chunks[NUM_CHUNKS];
+};
+
 layout(scalar, push_constant) uniform T {
-    ivec2 chunk_indices[NUM_CHUNKS];
+    ChunkIndicesBuffer chunk_indicies_buffer;
+    ChunkBuffer chunk_buffer;
     vec3 pos;
     mat4 r;
 }
 push_constants;
+
+struct ChunkIntersection {
+    float t;
+    ivec2 index;
+}
+
+vec4 color_palette[14] = {
+    {0.0, 0.0, 0.0, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.25, 0.25, 0, 1.0},
+    {0.2, 0.8, 0.1, 1.0}, {0.2, 0.9, 0.1, 1.0}, {0.8, 0.8, 0.0, 1.0},
+    {0.9, 0.9, 0.9, 1.0}, {0.8, 0.5, 0.0, 1.0}, {0.0, 0.2, 0.8, 1.0},
+    {0.1, 0.4, 0.1, 1.0}, {0.3, 0.1, 0.0, 1.0}, {1.0, 1.0, 1.0, 1.0},
+    {1.0, 0.2, 0.0, 1.0}, {1.0, 0.0, 1.0, 1.0}};
 
 // Calculate intersection of an AABB
 bool slab(ivec2 c_idx, vec3 o, vec3 inv_d, out float t) {
@@ -65,6 +91,82 @@ vec4 aabb_debug_color_palette(ivec2 chunk_idx) {
     return vec4(0);
 }
 
+bool isBlock(int ci, ivec3 m) {
+    return m.x >= 0 && m.x < CUNK_CHUNK_SIZE && m.y >= 0 &&
+           m.y < CUNK_CHUNK_MAX_HEIGHT && m.z >= 0 && m.z < CUNK_CHUNK_SIZE &&
+           push_constants.chunk_buffer.chunks[ci].blocks[m.x][m.y][m.z] > 0;
+}
+
+vec4 blockColor(int ci, ivec3 m) {
+    vec4 c = vec4(0);
+    int b = push_constants.chunk_buffer.chunks[ci].blocks[m.x][m.y][m.z];
+    if (b > 0 && b < 14) {
+        c = color_palette[b];
+    }
+    return c;
+}
+
+// pos and dir are in local chunk's space
+bool dda(vec3 pos, vec3 dir, int ci, out vec4 color_out) {
+    // block indices on map
+    ivec3 map = ivec3(floor(pos));
+
+    vec3 deltaDist = abs(1 / dir);
+
+    ivec3 rayStep = ivec3(sign(dir));
+    vec3 sideDist =
+        (sign(dir) * (vec3(map) - pos) + (sign(dir) * 0.5) + 0.5) * deltaDist;
+
+    bvec3 mask = bvec3(false, true, false);
+
+    // perform DDA
+    for (int i = 0; i < MAX_STEP; i++) {
+
+        // if hit block
+        if (isBlock(ci, map)) {
+            vec4 color;
+            // fake shadow on sides
+            if (mask.x) {
+                color = vec4(0.5);
+            }
+            if (mask.y) {
+                color = vec4(1.0);
+            }
+            if (mask.z) {
+                color = vec4(0.75);
+            }
+
+            // mix shadow color with block color
+            color_out = color * blockColor(ci, map);
+            return true;
+        }
+
+        if (sideDist.x < sideDist.y) {
+            if (sideDist.x < sideDist.z) {
+                sideDist.x += deltaDist.x;
+                map.x += rayStep.x;
+                mask = bvec3(true, false, false);
+            } else {
+                sideDist.z += deltaDist.z;
+                map.z += rayStep.z;
+                mask = bvec3(false, false, true);
+            }
+        } else {
+            if (sideDist.y < sideDist.z) {
+                sideDist.y += deltaDist.y;
+                map.y += rayStep.y;
+                mask = bvec3(false, true, false);
+            } else {
+                sideDist.z += deltaDist.z;
+                map.z += rayStep.z;
+                mask = bvec3(false, false, true);
+            }
+        }
+    }
+
+    return false;
+}
+
 void main() {
     ivec2 img_size = imageSize(renderTarget);
     float aspect_ratio = img_size.x / float(img_size.y);
@@ -84,27 +186,46 @@ void main() {
 
     float t_closest = 1 / 0.0; // +inf
     int idx_closest = -1;
-    vec4 c = vec4(0);
-    ivec2 chunk_indices;
+    vec4 c_closest = vec4(0);
     for (int i = 0; i < NUM_CHUNKS; i++) {
         float t_aabb = 0;
-        bool its = slab(push_constants.chunk_indices[i], push_constants.pos,
-                        inv_ray_dir, t_aabb);
+        bool its = slab(push_constants.chunk_indicies_buffer.indices[i],
+                        push_constants.pos, inv_ray_dir, t_aabb);
 
-        if (its && t_aabb <= t_closest) {
-            t_closest = t_aabb;
-            idx_closest = i;
-            chunk_indices = push_constants.chunk_indices[i];
+        if (its) {
+            vec3 pos = push_constants.pos;
+            ivec2 chunk_idx = push_constants.chunk_indicies_buffer.indices[i];
+
+            // project pos to chunk (intersection) surface
+            pos = pos + ray_dir * (t_aabb + 1e-4);
+
+            // world to chunk/object space
+            pos = pos + vec3(-chunk_idx.x * CUNK_CHUNK_SIZE, 0,
+                             -chunk_idx.y * CUNK_CHUNK_SIZE);
+
+            vec4 c = vec4(0);
+            bool dda_its = dda(pos, ray_dir, i, c);
+            if (dda_its && t_aabb <= t_closest) {
+                t_closest = t_aabb;
+                c_closest = c;
+            }
         }
     }
 
-    if (idx_closest >= 0) {
-        imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy),
-                   aabb_debug_color_palette(chunk_indices));
+    imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy), c_closest);
 
-        // previously push_constants is accessed non-uniformly
-        // (different idx_closest)
-        // imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy),
-        //            aabb_debug_color_palette(push_constants.chunk_indices[idx_closest]));
-    }
+    // if (idx_closest >= 0) {
+
+    //     // Ray-aabb intersection debug
+
+    //     // imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy),
+    //     //            aabb_debug_color_palette(chunk_index_closest));
+
+    //     // Previously push_constants is accessed non-uniformly that caused
+    //     // z-fighting (different idx_closest)
+
+    //     // imageStore(renderTarget, ivec2(gl_GlobalInvocationID.xy),
+    //     //            aabb_debug_color_palette(
+    //     //                push_constants.chunk_indices[idx_closest]));
+    // }
 }

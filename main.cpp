@@ -15,11 +15,15 @@
 #include "nasl/nasl_mat.h"
 
 #include "camera.h"
-#define NUM_CHUNKS 25
+#define NUM_CHUNKS 1089
 #define NUM_BLOCK_PER_CHUNK                                                    \
     CUNK_CHUNK_SIZE *CUNK_CHUNK_MAX_HEIGHT *CUNK_CHUNK_SIZE
 
 using namespace nasl;
+
+struct GPUChunk {
+    int blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE];
+};
 
 struct {
     VkDeviceAddress chunk_buffer;
@@ -28,16 +32,17 @@ struct {
 } push_constants_dda;
 
 struct {
-    ivec2 chunk_indices[NUM_CHUNKS];
+    VkDeviceAddress chunk_indices_buffer;
+    VkDeviceAddress chunk_buffer;
     vec3 pos;
     mat4 r;
 } push_constants_its;
 
 Camera camera = {.position =
                      {
-                         32,
-                         128,
-                         32,
+                         -1,
+                         180,
+                         -1,
                      },
                  .rotation = {0, M_PI_2},
                  .fov = 60};
@@ -112,32 +117,46 @@ int main(int argc, char **argv) {
     int player_chunk_z = camera.position.z / 16;
 
     // chunk positions (flat, no height)
-    ivec2 chunk_indices[NUM_CHUNKS] = {};
-    for (int i = 0; i < NUM_CHUNKS; i++) {
-        if (i % 2 == 0) {
-            chunk_indices[i] = ivec2(0, 2 * i + 1);
+    // ivec2 chunk_indices[NUM_CHUNKS] = {ivec2(0, 0), ivec2(0, 1)};
 
-        } else {
-            chunk_indices[i] = ivec2(2 * i + 1, 0);
+    ivec2 chunk_indices[NUM_CHUNKS] = {ivec2(1, 0)};
+    for (int x = 0; x < 33; x++) {
+        for (int z = 0; z < 33; z++) {
+            chunk_indices[x * 33 + z] = ivec2(x, z);
         }
     }
 
-    int(*chunk_ptrs[NUM_CHUNKS])[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT]
-                                [CUNK_CHUNK_SIZE];
+    std::unique_ptr<imr::Buffer> chunk_indices_buffer =
+        std::make_unique<imr::Buffer>(
+            device, sizeof(chunk_indices),
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-    VkDeviceAddress buffer_addresses[NUM_CHUNKS];
+    chunk_indices_buffer->uploadDataSync(0, chunk_indices_buffer->size,
+                                         chunk_indices);
+    push_constants_its.chunk_indices_buffer =
+        chunk_indices_buffer->device_address();
 
-    auto pack_chunk = [&world, &chunk_ptrs, &device, &chunk_indices,
-                       &buffer_addresses](int cx, int cz, int idx) {
+    std::vector<GPUChunk> gpu_chunks;
+    gpu_chunks.resize(NUM_CHUNKS);
+    VkDeviceSize chunk_bytes = VkDeviceSize(NUM_CHUNKS * sizeof(GPUChunk));
+
+    std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
+        device, chunk_bytes,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    auto pack_chunk = [&world, &device](int cx, int cz, GPUChunk &dst) {
         std::cout << std::format("Loading Chunk ({}, {})\n", cx, cz);
         world.load_chunk(cx, cz);
         Chunk *chunk = world.get_loaded_chunk(cx, cz);
+        std::memset(&dst, 0, sizeof(GPUChunk));
+
         if (chunk == nullptr) {
             std::cout << "\tFailed to Load!\n";
-            chunk_ptrs[idx] = nullptr;
         } else {
-            int chunk_data[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT]
-                          [CUNK_CHUNK_SIZE] = {};
+
             int num_solid_block = 0;
             for (int s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
                 if (chunk->data.sections[s] == nullptr)
@@ -150,7 +169,7 @@ int main(int argc, char **argv) {
                                 chunk->data.sections[s]->block_data[ys][z][x];
                             if (block != BlockAir) {
                                 int y = ys + s * CUNK_CHUNK_SIZE;
-                                chunk_data[x][y][z] = block;
+                                dst.blocks[x][y][z] = block;
                                 num_solid_block++;
                             }
                         }
@@ -159,28 +178,15 @@ int main(int argc, char **argv) {
             std::cout << std::format(
                 "\tBlock stats: {:d} ({:.2f}\% full)\n", num_solid_block,
                 num_solid_block / float(NUM_BLOCK_PER_CHUNK));
-
-            // Upload chunk data to GPU
-
-            std::unique_ptr<imr::Buffer> chunk_buffer =
-                std::make_unique<imr::Buffer>(
-                    device, sizeof(chunk_data),
-                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-
-            chunk_buffer->uploadDataSync(0, chunk_buffer->size, chunk_data);
-
-            buffer_addresses[idx] = chunk_buffer->device_address();
-
-            push_constants_its.chunk_indices[idx] = chunk_indices[idx];
-            std::cout << "\tUploaded to GPU\n";
         }
     };
 
     for (int i = 0; i < NUM_CHUNKS; i++) {
-        pack_chunk(chunk_indices[i][0], chunk_indices[i][1], i);
+        pack_chunk(chunk_indices[i][0], chunk_indices[i][1], gpu_chunks[i]);
     }
+
+    chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
+    push_constants_its.chunk_buffer = chunk_buffer->device_address();
 
     auto shaders = std::make_unique<Shaders>(device);
 
