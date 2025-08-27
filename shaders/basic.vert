@@ -22,12 +22,12 @@ layout(scalar, push_constant) uniform T {
     mat4 matrix;
     mat4 inv_matrix;
     vec3 camera_pos;
+    ivec2 window_size;
 }
 push_constants;
 
 void main() {
     mat4 matrix = push_constants.matrix;
     vec3 vertex = push_constants.vertex_buffer.vertices[gl_VertexIndex];
-    gl_Position =
-        matrix * vec4(vec3(vertex + push_constants.chunk_position), 1.0);
+    gl_Position = matrix * vec4(vec3(vertex + push_constants.chunk_position), 1.0);
 }

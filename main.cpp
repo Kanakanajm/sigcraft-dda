@@ -90,7 +90,7 @@ struct {
     mat4 matrix;
     mat4 inv_matrix;
     vec3 camera_pos;
-
+    ivec2 window_size;
 } push_constants;
 
 struct GPUChunk {
@@ -100,9 +100,9 @@ struct GPUChunk {
 
 Camera camera = {.position =
                      {
-                         18,
-                         160,
-                         18,
+                         16,
+                         192,
+                         0,
                      },
                  .rotation = {M_PI_2 + M_PI_4, 0},
                  .fov = 60};
@@ -272,6 +272,7 @@ int main(int argc, char **argv) {
                 camera_move_freelook(&camera, &camera_input, &camera_state,
                                      delta);
                 push_constants.camera_pos = camera.position;
+                push_constants.window_size = { static_cast<int>(context.image().size().width), static_cast<int>(context.image().size().height) };
 
                 if (reload_shaders) {
                     swapchain.drain();
@@ -458,8 +459,8 @@ int main(int argc, char **argv) {
                         // }
 
                         push_constants.matrix = m;
-                        push_constants.inv_matrix =
-                            invert_mat4(camera_rotation_matrix(&camera));
+                        push_constants.inv_matrix = invert_mat4(push_constants.matrix);
+                        //push_constants.inv_matrix = invert_mat4(camera_rotation_matrix(&camera));
                         for (GPUChunk chunk : chunks) {
                             push_constants.chunk_position = {
                                 chunk.location[0] * float(CUNK_CHUNK_SIZE), 0,
