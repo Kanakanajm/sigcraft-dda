@@ -55,8 +55,17 @@ void main() {
     // world to local chunk coord
     pos = pos - push_constants.chunk_position;
 
-    vec4 dir_aff =
-        normalize(push_constants.inv_matrix * vec4(gl_FragCoord.xy, -1, 0));
+    ivec2 image_size_px = ivec2(1024, 1024);
+    float aspect_ratio = image_size_px.x / float(image_size_px.y);
+
+    vec2 pixel = gl_FragCoord.xy - vec2(0.5, 0.5);
+
+    vec2 screen_uv = (2.0 * pixel / vec2(image_size_px)) - 1.0;
+    screen_uv.x *= aspect_ratio;
+    screen_uv.y = -screen_uv.y;
+    vec4 ray_direction_camera = vec4(screen_uv.x, screen_uv.y, -1.0, 0.0);
+
+    vec4 dir_aff = normalize(push_constants.inv_matrix * ray_direction_camera);
     vec3 dir = dir_aff.xyz;
 
     // block indices on map
