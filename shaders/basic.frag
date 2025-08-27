@@ -25,7 +25,6 @@ layout(scalar, push_constant) uniform T {
     mat4 inv_matrix;
     vec3 camera_pos;
     ivec2 window_size;
-    bool inside_chunk;
 }
 push_constants;
 
@@ -42,7 +41,8 @@ bool inRange(ivec3 m) {
 }
 
 bool isBlock(ivec3 m) {
-    return inRange(m) && push_constants.chunk_buffer.block_data[m.x][m.y][m.z] > 0;
+    return inRange(m) &&
+           push_constants.chunk_buffer.block_data[m.x][m.y][m.z] > 0;
 }
 
 vec4 blockColor(ivec3 m) {
@@ -54,19 +54,19 @@ vec4 blockColor(ivec3 m) {
     return c;
 }
 
-void main_() {
-    vec4 cs = gl_FragCoord / vec4(push_constants.window_size.xy, vec2(1));
+void main() {
+    vec4 cs = (gl_FragCoord - vec4(0.5, 0.5, 0, 0)) /
+              vec4(push_constants.window_size.xy, vec2(1));
     cs.w = 1.0;
     cs.xy = vec2(-1) + cs.xy * 2;
     vec4 ws = push_constants.inv_matrix * cs;
     ws.xyz /= ws.w;
+    vec3 os = ws.xyz - push_constants.chunk_position;
 
-    vec3 ray_dir = normalize(ws.xyz - push_constants.camera_pos);
-    colorOut = vec4(ray_dir * 0.5 + vec3(0.5), 1);
+    colorOut = blockColor(ivec3(os));
 }
 
-void main() {
-
+void main_() {
 
     vec4 cs = gl_FragCoord / vec4(push_constants.window_size.xy, vec2(1));
     cs.w = 1.0;
@@ -75,16 +75,8 @@ void main() {
     ws.xyz /= ws.w;
     vec3 os = ws.xyz - push_constants.chunk_position;
 
-
     vec3 pos = os;
     vec3 dir = -normalize(ws.xyz - push_constants.camera_pos);
-
-    if (push_constants.inside_chunk) {
-        //pos = push_constants.camera_pos;
-        //dir = normalize(ws.xyz - os);
-    }
-
-
 
     // block indices on map
     ivec3 map = ivec3(floor(pos));

@@ -91,7 +91,6 @@ struct {
     mat4 inv_matrix;
     vec3 camera_pos;
     ivec2 window_size;
-    bool inside_chunk = false;
 } push_constants;
 
 struct GPUChunk {
@@ -145,15 +144,17 @@ struct Shaders {
                 imr::GraphicsPipeline::simple_triangle_input_assembly(),
             .viewportState =
                 imr::GraphicsPipeline::one_dynamically_sized_viewport(),
-            .rasterizationState =VkPipelineRasterizationStateCreateInfo {
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .rasterizationState =
+                VkPipelineRasterizationStateCreateInfo{
+                    .sType =
+                        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 
-                .polygonMode = VK_POLYGON_MODE_FILL,
-                .cullMode = VK_CULL_MODE_NONE,
-                .frontFace = VK_FRONT_FACE_CLOCKWISE,
+                    .polygonMode = VK_POLYGON_MODE_FILL,
+                    .cullMode = VK_CULL_MODE_NONE,
+                    .frontFace = VK_FRONT_FACE_CLOCKWISE,
 
-                .lineWidth = 1.0f,
-            },
+                    .lineWidth = 1.0f,
+                },
             .multisampleState = imr::GraphicsPipeline::one_spp(),
             .depthStencilState = imr::GraphicsPipeline::simple_depth_testing(),
         };
@@ -203,13 +204,13 @@ int main(int argc, char **argv) {
 
     auto world = World(argv[1]);
     std::vector<GPUChunk> chunks;
-    int cx = 16;
-    int cz = 16;
+    int cx = 0;
+    int cz = 0;
     world.load_chunk(cx, cz);
     while (!world.get_loaded_chunk(cx, cz)) {
     }
     auto ch = world.get_loaded_chunk(cx, cz);
-    int blocks[CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE][CUNK_CHUNK_SIZE] = {};
+    int blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
     for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
         if (!ch->data.sections[s]) {
             continue;
@@ -218,9 +219,9 @@ int main(int argc, char **argv) {
         for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
             for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
                 for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
-                    BlockData b = ch->data.sections[s]->block_data[x][y][z];
+                    BlockData b = ch->data.sections[s]->block_data[y][z][x];
                     if (b != BlockAir) {
-                        blocks[s * CUNK_CHUNK_SIZE + y][x][z] = b;
+                        blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
                     }
                 }
     }
@@ -280,7 +281,9 @@ int main(int argc, char **argv) {
                 camera_move_freelook(&camera, &camera_input, &camera_state,
                                      delta);
                 push_constants.camera_pos = camera.position;
-                push_constants.window_size = { static_cast<int>(context.image().size().width), static_cast<int>(context.image().size().height) };
+                push_constants.window_size = {
+                    static_cast<int>(context.image().size().width),
+                    static_cast<int>(context.image().size().height)};
 
                 if (reload_shaders) {
                     swapchain.drain();
@@ -366,6 +369,7 @@ int main(int argc, char **argv) {
                     camera_get_view_mat4(&camera, context.image().size().width,
                                          context.image().size().height);
                 m = m * view_mat;
+                mat4 inv_mat = invert_mat4(m);
                 m = m * translate_mat4(vec3(-0.5, -0.5f, -0.5f));
 
                 auto &pipeline = shaders->pipeline;
@@ -467,23 +471,14 @@ int main(int argc, char **argv) {
                         // }
 
                         push_constants.matrix = m;
-                        push_constants.inv_matrix = invert_mat4(push_constants.matrix);
-                        //push_constants.inv_matrix = invert_mat4(camera_rotation_matrix(&camera));
+                        push_constants.inv_matrix = inv_mat;
+                        // push_constants.inv_matrix =
+                        // invert_mat4(camera_rotation_matrix(&camera));
                         for (GPUChunk chunk : chunks) {
                             push_constants.chunk_position = {
                                 chunk.location[0] * float(CUNK_CHUNK_SIZE), 0,
                                 chunk.location[1] * float(CUNK_CHUNK_SIZE)};
                             push_constants.chunk_buffer = chunk.chunk_buffer;
-
-                            if (camera.position.x >= push_constants.chunk_position.x && camera.position.x <= (push_constants.chunk_position.x + 1) * float(CUNK_CHUNK_SIZE) &&
-                                camera.position.y >= 0 && camera.position.y <= CUNK_CHUNK_MAX_HEIGHT &&
-                                camera.position.z >= push_constants.chunk_position.z && camera.position.z <= (push_constants.chunk_position.z + 1) * float(CUNK_CHUNK_SIZE)) {
-                                push_constants.inside_chunk = true;
-                            }
-                            else {
-                                push_constants.inside_chunk = false;
-                            }
-
 
                             vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                VK_SHADER_STAGE_VERTEX_BIT |
