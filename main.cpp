@@ -100,11 +100,11 @@ struct GPUChunk {
 
 Camera camera = {.position =
                      {
-                         24,
-                         192,
-                         24,
+                         18,
+                         160,
+                         18,
                      },
-                 .rotation = {0, M_PI_2},
+                 .rotation = {M_PI_2 + M_PI_4, 0},
                  .fov = 60};
 
 CameraFreelookState camera_state = {
