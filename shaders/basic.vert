@@ -23,6 +23,7 @@ layout(scalar, push_constant) uniform T {
     mat4 inv_matrix;
     vec3 camera_pos;
     ivec2 window_size;
+    bool inside_chunk;
 }
 push_constants;
 

@@ -91,6 +91,7 @@ struct {
     mat4 inv_matrix;
     vec3 camera_pos;
     ivec2 window_size;
+    bool inside_chunk = false;
 } push_constants;
 
 struct GPUChunk {
@@ -144,8 +145,15 @@ struct Shaders {
                 imr::GraphicsPipeline::simple_triangle_input_assembly(),
             .viewportState =
                 imr::GraphicsPipeline::one_dynamically_sized_viewport(),
-            .rasterizationState =
-                imr::GraphicsPipeline::solid_filled_polygons(),
+            .rasterizationState =VkPipelineRasterizationStateCreateInfo {
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+
+                .polygonMode = VK_POLYGON_MODE_FILL,
+                .cullMode = VK_CULL_MODE_NONE,
+                .frontFace = VK_FRONT_FACE_CLOCKWISE,
+
+                .lineWidth = 1.0f,
+            },
             .multisampleState = imr::GraphicsPipeline::one_spp(),
             .depthStencilState = imr::GraphicsPipeline::simple_depth_testing(),
         };
@@ -466,6 +474,16 @@ int main(int argc, char **argv) {
                                 chunk.location[0] * float(CUNK_CHUNK_SIZE), 0,
                                 chunk.location[1] * float(CUNK_CHUNK_SIZE)};
                             push_constants.chunk_buffer = chunk.chunk_buffer;
+
+                            if (camera.position.x >= push_constants.chunk_position.x && camera.position.x <= (push_constants.chunk_position.x + 1) * float(CUNK_CHUNK_SIZE) &&
+                                camera.position.y >= 0 && camera.position.y <= CUNK_CHUNK_MAX_HEIGHT &&
+                                camera.position.z >= push_constants.chunk_position.z && camera.position.z <= (push_constants.chunk_position.z + 1) * float(CUNK_CHUNK_SIZE)) {
+                                push_constants.inside_chunk = true;
+                            }
+                            else {
+                                push_constants.inside_chunk = false;
+                            }
+
 
                             vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                VK_SHADER_STAGE_VERTEX_BIT |

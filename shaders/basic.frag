@@ -25,6 +25,7 @@ layout(scalar, push_constant) uniform T {
     mat4 inv_matrix;
     vec3 camera_pos;
     ivec2 window_size;
+    bool inside_chunk;
 }
 push_constants;
 
@@ -53,17 +54,19 @@ vec4 blockColor(ivec3 m) {
     return c;
 }
 
-void main() {
+void main_() {
     vec4 cs = gl_FragCoord / vec4(push_constants.window_size.xy, vec2(1));
     cs.w = 1.0;
     cs.xy = vec2(-1) + cs.xy * 2;
     vec4 ws = push_constants.inv_matrix * cs;
     ws.xyz /= ws.w;
+
     vec3 ray_dir = normalize(ws.xyz - push_constants.camera_pos);
     colorOut = vec4(ray_dir * 0.5 + vec3(0.5), 1);
 }
 
-void main_() {
+void main() {
+
 
     vec4 cs = gl_FragCoord / vec4(push_constants.window_size.xy, vec2(1));
     cs.w = 1.0;
@@ -72,9 +75,16 @@ void main_() {
     ws.xyz /= ws.w;
     vec3 os = ws.xyz - push_constants.chunk_position;
 
-    vec3 dir = normalize(ws.xyz - push_constants.camera_pos);
 
     vec3 pos = os;
+    vec3 dir = -normalize(ws.xyz - push_constants.camera_pos);
+
+    if (push_constants.inside_chunk) {
+        //pos = push_constants.camera_pos;
+        //dir = normalize(ws.xyz - os);
+    }
+
+
 
     // block indices on map
     ivec3 map = ivec3(floor(pos));
@@ -87,7 +97,7 @@ void main_() {
 
     bvec3 mask = bvec3(false, true, false);
 
-    colorOut = vec4(1);
+    colorOut = vec4(0);
 
     // perform DDA
     for (int i = 0; i < MAX_STEP; i++) {
