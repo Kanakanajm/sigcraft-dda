@@ -54,7 +54,7 @@ vec4 blockColor(ivec3 m) {
     return c;
 }
 
-void main() {
+void main_() {
     vec4 cs = (gl_FragCoord - vec4(0.5, 0.5, 0, 0)) /
               vec4(push_constants.window_size.xy, vec2(1));
     cs.w = 1.0;
@@ -62,13 +62,15 @@ void main() {
     vec4 ws = push_constants.inv_matrix * cs;
     ws.xyz /= ws.w;
     vec3 os = ws.xyz - push_constants.chunk_position;
-
-    colorOut = blockColor(ivec3(os));
+    colorOut = vec4(0);
+    if (inRange(ivec3(os))) {
+        colorOut = blockColor(ivec3(os));
+    }
 }
 
-void main_() {
-
-    vec4 cs = gl_FragCoord / vec4(push_constants.window_size.xy, vec2(1));
+void main() {
+    vec4 cs = (gl_FragCoord - vec4(0.5, 0.5, 0, 0)) /
+              vec4(push_constants.window_size.xy, vec2(1));
     cs.w = 1.0;
     cs.xy = vec2(-1) + cs.xy * 2;
     vec4 ws = push_constants.inv_matrix * cs;
