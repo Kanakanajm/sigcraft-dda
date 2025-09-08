@@ -405,6 +405,20 @@ int main(int argc, char **argv) {
                 context.frame().withRenderTargets(
                     cmdbuf, {&image}, &*depthBuffer, [&]() {
                         std::vector<GPUChunk> chunks;
+                        chunks.resize(chunk_count);
+                        std::vector<std::shared_ptr<imr::Buffer>> buffers;
+                        buffers.resize(chunk_count);
+
+                        for(size_t i = 0; i < chunk_count; ++i) {
+                            std::shared_ptr<imr::Buffer> chunk_buffer =
+                            std::make_shared<imr::Buffer>(
+                                device, 4 * CUNK_CHUNK_SIZE * CUNK_CHUNK_MAX_HEIGHT * CUNK_CHUNK_SIZE,
+                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                            buffers[i] = chunk_buffer;
+                        }
+
                         int player_chunk_x =
                             int(std::floor(camera.position.x / 16.0f));
                         int player_chunk_z =
@@ -435,6 +449,7 @@ int main(int argc, char **argv) {
                         int min_cx = player_chunk_x - radius;
                         int min_cz = player_chunk_z - radius;
 
+                        size_t i = 0;
                         for (int dx = 0; dx < grid_size; ++dx) {
                             for (int dz = 0; dz < grid_size; ++dz) {
                                 int cx = min_cx + dx;
@@ -478,22 +493,14 @@ int main(int argc, char **argv) {
                                         "Loaded {} blocks at chunk ({} {})",
                                         num_solid_block, cx, cz);
 
-                        std::unique_ptr<imr::Buffer> chunk_buffer =
-                            std::make_unique<imr::Buffer>(
-                                device, sizeof(block_data),
-                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-
-                                    chunk_buffer->uploadDataSync(
-                                        0, chunk_buffer->size, block_data);
-                                    chunk.chunk_buffer =
-                                        chunk_buffer->device_address();
-                                    chunks.push_back(chunk);
+                                    buffers[i]->uploadDataSync(
+                                        0, buffers[i]->size, block_data);
+                                    chunk.chunk_buffer = buffers[i]->device_address();
+                                    chunks[i] = chunk;
                                 }
+                                i++;
                             }
                         }
-
                         for (GPUChunk chunk : chunks) {
                             push_constants.chunk = {
                                 chunk.location[0] * CUNK_CHUNK_SIZE, 0,
