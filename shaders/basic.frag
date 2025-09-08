@@ -29,6 +29,7 @@ layout(scalar, buffer_reference) buffer TransformBuffer {
     mat4 mpp; // perspective projection matrix
     mat4 m_cs_ws; // camera space to world space
     mat4 m_cs_ws_rot; // camera space to world space, rotation only
+    vec3 camera_pos;
 };
 
 layout(scalar, buffer_reference) buffer BlockBuffer {
@@ -41,7 +42,8 @@ layout(scalar, push_constant) uniform T {
     DebugBuffer debug2_buffer;
     TransformBuffer trans_buffer;
     BlockBuffer block_buffer;
-    ivec4 cube; // (x, y, z) position and id as w
+    ivec4 chunk; // (x, y, z) position and id as w
+    bool inChunk;
 } push_constants;
 
 vec4 color_palette[14] = {
@@ -98,12 +100,16 @@ void main() {
 
     vec4 ws = push_constants.trans_buffer.m_cs_ws * vec4(cs, 1); // camera translation
 
-    vec4 os = ws - vec4(vec3(push_constants.cube.xyz), 0);
+    vec4 os = ws - vec4(vec3(push_constants.chunk.xyz), 0);
 
     vec3 dir = normalize((push_constants.trans_buffer.m_cs_ws * vec4(cs, 0)).xyz);
 
     // object space
     vec3 pos = os.xyz;
+    if (push_constants.inChunk) {
+        pos = push_constants.trans_buffer.camera_pos;
+    }
+
 
     // clamp to [0, CUNK_CHUNK_SIZE) x [0, CUNK_CHUNK_MAX_HEIGHT) x [0, CUNK_CHUNK_SIZE)
     pos.x = clamp(pos.x, 0, CUNK_CHUNK_SIZE - EPSILON_CLAMP);

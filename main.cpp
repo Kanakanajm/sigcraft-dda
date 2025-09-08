@@ -87,6 +87,7 @@ struct {
     mat4 mpp = identity_mat4; // perspective projection matrix
     mat4 m_cs_ws = identity_mat4; // camera space to world space
     mat4 m_cs_ws_rot = identity_mat4; // camera space to world space, rotation only
+    vec3 camera_pos;
 } transform_matrices;
 
 struct {
@@ -96,6 +97,7 @@ struct {
     VkDeviceAddress trans_buffer;
     VkDeviceAddress block_buffer;
     ivec4 chunk;
+    bool inChunk;
 } push_constants;
 
 struct GPUChunk {
@@ -208,41 +210,41 @@ int main(int argc, char **argv) {
     imr::FpsCounter fps_counter;
 
     auto world = World(argv[1]);
-    // std::vector<GPUChunk> chunks;
+    std::vector<GPUChunk> chunks;
 
-    // // only load one chunk for now
-    // ivec2 chunk_pos = ivec2(0, 0);
+    // only load one chunk for now
+    ivec2 chunk_pos = ivec2(0, 0);
     
-    // world.load_chunk(chunk_pos.x, chunk_pos.y);
-    // // force wait chunk to load
-    // while (!world.get_loaded_chunk(chunk_pos.x, chunk_pos.y)) {
-    // }
-    // auto ch = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
+    world.load_chunk(chunk_pos.x, chunk_pos.y);
+    // force wait chunk to load
+    while (!world.get_loaded_chunk(chunk_pos.x, chunk_pos.y)) {
+    }
+    auto ch = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
 
-    // int blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
-    // for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
-    //     if (!ch->data.sections[s]) {
-    //         continue;
-    //     }
+    uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
+    for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
+        if (!ch->data.sections[s]) {
+            continue;
+        }
 
-    //     for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
-    //     for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
-    //     for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
-    //         BlockData b = ch->data.sections[s]->block_data[y][z][x];
-    //         if (b != BlockAir) {
-    //             blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
-    //         }
-    //     }
-    // }
+        for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
+        for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
+        for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
+            BlockData b = ch->data.sections[s]->block_data[y][z][x];
+            if (b != BlockAir) {
+                blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
+            }
+        }
+    }
 
-    // std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
-    //     device, sizeof(blocks),
-    //     VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-    //         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
+        device, sizeof(blocks),
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-    // chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
+    chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
 
-    // chunks.push_back({chunk_pos, chunk_buffer->device_address()});
+    chunks.push_back({chunk_pos, chunk_buffer->device_address()});
 
     const int radius = 1;
     const int grid_size = 2 * radius + 1;
@@ -309,6 +311,7 @@ int main(int argc, char **argv) {
                 m_cs_ws = mul_mat4(invert_mat4(camera_rotation_matrix(&camera)),  m_cs_ws);
                 transform_matrices.m_cs_ws_rot = m_cs_ws; // intermediate step (rotation only)
                 transform_matrices.m_cs_ws =  mul_mat4(translate_mat4(camera.position), m_cs_ws);
+                transform_matrices.camera_pos = camera.position;
 
                 if (reload_shaders) {
                     swapchain.drain();
@@ -401,111 +404,21 @@ int main(int argc, char **argv) {
                 auto &pipeline = shaders->pipeline;
                 vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   pipeline->pipeline());
-
+                
+                uint chunk_id = 1;
                 context.frame().withRenderTargets(
                     cmdbuf, {&image}, &*depthBuffer, [&]() {
-                        std::vector<GPUChunk> chunks;
-                        chunks.resize(chunk_count);
-                        std::vector<std::shared_ptr<imr::Buffer>> buffers;
-                        buffers.resize(chunk_count);
-
-                        for(size_t i = 0; i < chunk_count; ++i) {
-                            std::shared_ptr<imr::Buffer> chunk_buffer =
-                            std::make_shared<imr::Buffer>(
-                                device, 4 * CUNK_CHUNK_SIZE * CUNK_CHUNK_MAX_HEIGHT * CUNK_CHUNK_SIZE,
-                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-                            buffers[i] = chunk_buffer;
-                        }
-
-                        int player_chunk_x =
-                            int(std::floor(camera.position.x / 16.0f));
-                        int player_chunk_z =
-                            int(std::floor(camera.position.z / 16.0f));
-
-                        ivec2 chunk_pos = ivec2(player_chunk_x,
-                        player_chunk_z);
-
-                        for (auto chunk : world.loaded_chunks()) {
-                            if (abs(chunk->cx - player_chunk_x) > radius ||
-                                abs(chunk->cz - player_chunk_z) > radius) {
-                                world.unload_chunk(chunk.get());
-                            }
-                        }
-
-                        auto load_chunk = [&](int cx, int cz) {
-                            auto loaded = world.get_loaded_chunk(cx, cz);
-                            if (!loaded)
-                                world.load_chunk(cx, cz);
-                        };
-
-                        /*
-                        00 01 02
-                        10 11 12
-                        20 21 22
-                        */
-                        // 11 - player pos / chunk pos
-                        int min_cx = player_chunk_x - radius;
-                        int min_cz = player_chunk_z - radius;
-
-                        size_t i = 0;
-                        for (int dx = 0; dx < grid_size; ++dx) {
-                            for (int dz = 0; dz < grid_size; ++dz) {
-                                int cx = min_cx + dx;
-                                int cz = min_cz + dz;
-                                load_chunk(cx, cz);
-                                auto ch = world.get_loaded_chunk(cx, cz);
-                                if (!ch) {
-                                    std::cout << std::format(
-                                        "Chunk ({}, {}) wasn't loaded\n", cx,
-                                        cz);
-                                } else {
-                                    GPUChunk chunk = {.location = ivec2(cx,
-                                    cz)}; int
-                                    block_data[CUNK_CHUNK_SIZE] [CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
-                                    int num_solid_block = 0;
-                                    for (size_t s = 0;
-                                         s < CUNK_CHUNK_SECTIONS_COUNT; ++s)
-                                         {
-                                        ChunkSection *sec =
-                                        ch->data.sections[s]; if (!sec)
-                                            continue;
-
-                                        for (size_t x = 0; x <
-                                        CUNK_CHUNK_SIZE; ++x)
-                                            for (size_t y = 0; y <
-                                            CUNK_CHUNK_SIZE;
-                                                 ++y)
-                                                for (size_t z = 0;
-                                                     z < CUNK_CHUNK_SIZE;
-                                                     ++z) {
-                                                    const unsigned int Y =
-                                                        y + s *
-                                                        CUNK_CHUNK_SIZE;
-                                                    block_data[x][Y][z] =
-                                                        sec->block_data[y][z][x];
-                                                    num_solid_block++;
-                                                }
-                                    }
-
-                                    std::cout << std::format(
-                                        "Loaded {} blocks at chunk ({} {})",
-                                        num_solid_block, cx, cz);
-
-                                    buffers[i]->uploadDataSync(
-                                        0, buffers[i]->size, block_data);
-                                    chunk.chunk_buffer = buffers[i]->device_address();
-                                    chunks[i] = chunk;
-                                }
-                                i++;
-                            }
-                        }
                         for (GPUChunk chunk : chunks) {
-                            push_constants.chunk = {
+                            // chunk position in world space
+                            ivec3 pc = {
                                 chunk.location[0] * CUNK_CHUNK_SIZE, 0,
-                                chunk.location[1] * CUNK_CHUNK_SIZE};
+                                chunk.location[1] * CUNK_CHUNK_SIZE };
+
+                            push_constants.chunk = ivec4(pc, chunk_id);
                             push_constants.block_buffer = chunk.chunk_buffer;
+                            push_constants.inChunk = camera.position.x >= pc.x && camera.position.x <= pc.x + CUNK_CHUNK_SIZE &&
+                                camera.position.y >= pc.y && camera.position.y <= pc.y + CUNK_CHUNK_MAX_HEIGHT &&
+                                camera.position.z >= pc.z && camera.position.z <= pc.z + CUNK_CHUNK_SIZE;
 
                             vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                VK_SHADER_STAGE_VERTEX_BIT |
@@ -513,6 +426,7 @@ int main(int argc, char **argv) {
                                                0, sizeof(push_constants),
                                                &push_constants);
                             vkCmdDraw(cmdbuf, 12 * 3, 1, 0, 0);
+                            chunk_id++;
                         }
                     });
 
