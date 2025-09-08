@@ -84,13 +84,18 @@ Cube make_cube() {
 }
 
 struct {
+    mat4 mpp = identity_mat4; // perspective projection matrix
+    mat4 m_cs_ws = identity_mat4; // camera space to world space
+    mat4 m_cs_ws_rot = identity_mat4; // camera space to world space, rotation only
+} transform_matrices;
+
+struct {
     VkDeviceAddress vertex_buffer;
-    VkDeviceAddress chunk_buffer;
-    vec3 chunk_position;
-    mat4 matrix;
-    mat4 inv_matrix;
-    vec3 camera_pos;
-    ivec2 window_size;
+    VkDeviceAddress debug_buffer;
+    VkDeviceAddress debug2_buffer;
+    VkDeviceAddress trans_buffer;
+    VkDeviceAddress block_buffer;
+    ivec4 chunk;
 } push_constants;
 
 struct GPUChunk {
@@ -100,12 +105,12 @@ struct GPUChunk {
 
 Camera camera = {.position =
                      {
-                         16,
-                         192,
                          0,
+                         0,
+                         32,
                      },
-                 .rotation = {M_PI_2 + M_PI_4, 0},
-                 .fov = 60};
+                 .rotation = {0,0},
+                 .fov = 90};
 
 CameraFreelookState camera_state = {
     .fly_speed = 100.0f,
@@ -182,7 +187,7 @@ struct Shaders {
 int main(int argc, char **argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    auto window = glfwCreateWindow(1024, 1024, "Example", nullptr, nullptr);
+    auto window = glfwCreateWindow(400, 400, "Example", nullptr, nullptr);
 
     if (argc < 2)
         return 0;
@@ -204,12 +209,16 @@ int main(int argc, char **argv) {
 
     auto world = World(argv[1]);
     std::vector<GPUChunk> chunks;
-    int cx = 0;
-    int cz = 0;
-    world.load_chunk(cx, cz);
-    while (!world.get_loaded_chunk(cx, cz)) {
+
+    // only load one chunk for now
+    ivec2 chunk_pos = ivec2(0, 0);
+    
+    world.load_chunk(chunk_pos.x, chunk_pos.y);
+    // force wait chunk to load
+    while (!world.get_loaded_chunk(chunk_pos.x, chunk_pos.y)) {
     }
-    auto ch = world.get_loaded_chunk(cx, cz);
+    auto ch = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
+
     int blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
     for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
         if (!ch->data.sections[s]) {
@@ -217,13 +226,13 @@ int main(int argc, char **argv) {
         }
 
         for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
-            for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
-                for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
-                    BlockData b = ch->data.sections[s]->block_data[y][z][x];
-                    if (b != BlockAir) {
-                        blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
-                    }
-                }
+        for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
+        for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
+            BlockData b = ch->data.sections[s]->block_data[y][z][x];
+            if (b != BlockAir) {
+                blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
+            }
+        }
     }
 
     std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
@@ -233,11 +242,11 @@ int main(int argc, char **argv) {
 
     chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
 
-    chunks.push_back({ivec2(cx, cz), chunk_buffer->device_address()});
+    chunks.push_back({chunk_pos, chunk_buffer->device_address()});
 
-    const int radius = 0;
-    const int grid_size = 2 * radius + 1;
-    const int chunk_count = grid_size * grid_size;
+    // const int radius = 0;
+    // const int grid_size = 2 * radius + 1;
+    // const int chunk_count = grid_size * grid_size;
 
     std::unique_ptr<imr::Buffer> vertex_buffer = std::make_unique<imr::Buffer>(
         device, sizeof(vec3) * 3 * 12 * 2,
@@ -262,6 +271,21 @@ int main(int argc, char **argv) {
     push_constants.vertex_buffer = vertex_buffer->device_address();
     vertex_buffer->uploadDataSync(0, vertex_buffer->size, vertex_vector.data());
 
+
+    vec4 debug_vectors[400*400] = { vec4(0) };
+
+    std::unique_ptr<imr::Buffer> debug_buffer = std::make_unique<imr::Buffer>(device, sizeof(debug_vectors), VK_BUFFER_USAGE_TRANSFER_DST_BIT  | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    push_constants.debug_buffer = debug_buffer->device_address();
+    
+    vec4 debug2_vectors[400*400] = { vec4(0) };
+
+    std::unique_ptr<imr::Buffer> debug2_buffer = std::make_unique<imr::Buffer>(device, sizeof(debug2_vectors), VK_BUFFER_USAGE_TRANSFER_DST_BIT  | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    push_constants.debug2_buffer = debug2_buffer->device_address();
+    
+
+    std::unique_ptr<imr::Buffer> trans_buffer = std::make_unique<imr::Buffer>(device, sizeof(transform_matrices), VK_BUFFER_USAGE_TRANSFER_DST_BIT  | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    push_constants.trans_buffer = trans_buffer->device_address();
+
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
 
@@ -280,10 +304,11 @@ int main(int argc, char **argv) {
                 camera_update(window, &camera_input);
                 camera_move_freelook(&camera, &camera_input, &camera_state,
                                      delta);
-                push_constants.camera_pos = camera.position;
-                push_constants.window_size = {
-                    static_cast<int>(context.image().size().width),
-                    static_cast<int>(context.image().size().height)};
+
+                mat4 m_cs_ws = identity_mat4;
+                m_cs_ws = mul_mat4(invert_mat4(camera_rotation_matrix(&camera)),  m_cs_ws);
+                transform_matrices.m_cs_ws_rot = m_cs_ws; // intermediate step (rotation only)
+                transform_matrices.m_cs_ws =  mul_mat4(translate_mat4(camera.position), m_cs_ws);
 
                 if (reload_shaders) {
                     swapchain.drain();
@@ -369,8 +394,9 @@ int main(int argc, char **argv) {
                     camera_get_view_mat4(&camera, context.image().size().width,
                                          context.image().size().height);
                 m = m * view_mat;
-                mat4 inv_mat = invert_mat4(m);
-                m = m * translate_mat4(vec3(-0.5, -0.5f, -0.5f));
+                // m = m * translate_mat4(vec3(-0.5, -0.5f, -0.5f));
+                transform_matrices.mpp = m;
+                trans_buffer->uploadDataSync(0, trans_buffer->size, &transform_matrices);
 
                 auto &pipeline = shaders->pipeline;
                 vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -470,15 +496,11 @@ int main(int argc, char **argv) {
                         //     }
                         // }
 
-                        push_constants.matrix = m;
-                        push_constants.inv_matrix = inv_mat;
-                        // push_constants.inv_matrix =
-                        // invert_mat4(camera_rotation_matrix(&camera));
                         for (GPUChunk chunk : chunks) {
-                            push_constants.chunk_position = {
-                                chunk.location[0] * float(CUNK_CHUNK_SIZE), 0,
-                                chunk.location[1] * float(CUNK_CHUNK_SIZE)};
-                            push_constants.chunk_buffer = chunk.chunk_buffer;
+                            push_constants.chunk = {
+                                chunk.location[0] * CUNK_CHUNK_SIZE, 0,
+                                chunk.location[1] * CUNK_CHUNK_SIZE};
+                            push_constants.block_buffer = chunk.chunk_buffer;
 
                             vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                VK_SHADER_STAGE_VERTEX_BIT |
