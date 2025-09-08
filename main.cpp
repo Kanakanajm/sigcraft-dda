@@ -208,45 +208,45 @@ int main(int argc, char **argv) {
     imr::FpsCounter fps_counter;
 
     auto world = World(argv[1]);
-    std::vector<GPUChunk> chunks;
+    // std::vector<GPUChunk> chunks;
 
-    // only load one chunk for now
-    ivec2 chunk_pos = ivec2(0, 0);
+    // // only load one chunk for now
+    // ivec2 chunk_pos = ivec2(0, 0);
     
-    world.load_chunk(chunk_pos.x, chunk_pos.y);
-    // force wait chunk to load
-    while (!world.get_loaded_chunk(chunk_pos.x, chunk_pos.y)) {
-    }
-    auto ch = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
+    // world.load_chunk(chunk_pos.x, chunk_pos.y);
+    // // force wait chunk to load
+    // while (!world.get_loaded_chunk(chunk_pos.x, chunk_pos.y)) {
+    // }
+    // auto ch = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
 
-    int blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
-    for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
-        if (!ch->data.sections[s]) {
-            continue;
-        }
+    // int blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
+    // for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
+    //     if (!ch->data.sections[s]) {
+    //         continue;
+    //     }
 
-        for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
-        for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
-        for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
-            BlockData b = ch->data.sections[s]->block_data[y][z][x];
-            if (b != BlockAir) {
-                blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
-            }
-        }
-    }
+    //     for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
+    //     for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
+    //     for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
+    //         BlockData b = ch->data.sections[s]->block_data[y][z][x];
+    //         if (b != BlockAir) {
+    //             blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
+    //         }
+    //     }
+    // }
 
-    std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
-        device, sizeof(blocks),
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    // std::unique_ptr<imr::Buffer> chunk_buffer = std::make_unique<imr::Buffer>(
+    //     device, sizeof(blocks),
+    //     VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+    //         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-    chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
+    // chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
 
-    chunks.push_back({chunk_pos, chunk_buffer->device_address()});
+    // chunks.push_back({chunk_pos, chunk_buffer->device_address()});
 
-    // const int radius = 0;
-    // const int grid_size = 2 * radius + 1;
-    // const int chunk_count = grid_size * grid_size;
+    const int radius = 1;
+    const int grid_size = 2 * radius + 1;
+    const int chunk_count = grid_size * grid_size;
 
     std::unique_ptr<imr::Buffer> vertex_buffer = std::make_unique<imr::Buffer>(
         device, sizeof(vec3) * 3 * 12 * 2,
@@ -404,97 +404,95 @@ int main(int argc, char **argv) {
 
                 context.frame().withRenderTargets(
                     cmdbuf, {&image}, &*depthBuffer, [&]() {
-                        // std::vector<GPUChunk> chunks;
-                        // int player_chunk_x =
-                        //     int(std::floor(camera.position.x / 16.0f));
-                        // int player_chunk_z =
-                        //     int(std::floor(camera.position.z / 16.0f));
+                        std::vector<GPUChunk> chunks;
+                        int player_chunk_x =
+                            int(std::floor(camera.position.x / 16.0f));
+                        int player_chunk_z =
+                            int(std::floor(camera.position.z / 16.0f));
 
-                        // ivec2 chunk_pos = ivec2(player_chunk_x,
-                        // player_chunk_z);
+                        ivec2 chunk_pos = ivec2(player_chunk_x,
+                        player_chunk_z);
 
-                        // for (auto chunk : world.loaded_chunks()) {
-                        //     if (abs(chunk->cx - player_chunk_x) > radius ||
-                        //         abs(chunk->cz - player_chunk_z) > radius) {
-                        //         world.unload_chunk(chunk.get());
-                        //     }
-                        // }
+                        for (auto chunk : world.loaded_chunks()) {
+                            if (abs(chunk->cx - player_chunk_x) > radius ||
+                                abs(chunk->cz - player_chunk_z) > radius) {
+                                world.unload_chunk(chunk.get());
+                            }
+                        }
 
-                        // auto load_chunk = [&](int cx, int cz) {
-                        //     auto loaded = world.get_loaded_chunk(cx, cz);
-                        //     if (!loaded)
-                        //         world.load_chunk(cx, cz);
-                        // };
+                        auto load_chunk = [&](int cx, int cz) {
+                            auto loaded = world.get_loaded_chunk(cx, cz);
+                            if (!loaded)
+                                world.load_chunk(cx, cz);
+                        };
 
-                        // /*
-                        // 00 01 02
-                        // 10 11 12
-                        // 20 21 22
-                        // */
-                        // // 11 - player pos / chunk pos
-                        // int min_cx = player_chunk_x - radius;
-                        // int min_cz = player_chunk_z - radius;
+                        /*
+                        00 01 02
+                        10 11 12
+                        20 21 22
+                        */
+                        // 11 - player pos / chunk pos
+                        int min_cx = player_chunk_x - radius;
+                        int min_cz = player_chunk_z - radius;
 
-                        // for (int dx = 0; dx < grid_size; ++dx) {
-                        //     for (int dz = 0; dz < grid_size; ++dz) {
-                        //         int cx = min_cx + dx;
-                        //         int cz = min_cz + dz;
-                        //         load_chunk(cx, cz);
-                        //         auto ch = world.get_loaded_chunk(cx, cz);
-                        //         if (!ch) {
-                        //             std::cout << std::format(
-                        //                 "Chunk ({}, {}) wasn't loaded\n", cx,
-                        //                 cz);
-                        //         } else {
-                        //             GPUChunk chunk = {.location = ivec2(cx,
-                        //             cz)}; int
-                        //             block_data[CUNK_CHUNK_MAX_HEIGHT]
-                        //                           [CUNK_CHUNK_SIZE]
-                        //                           [CUNK_CHUNK_SIZE] = {};
-                        //             int num_solid_block = 0;
-                        //             for (size_t s = 0;
-                        //                  s < CUNK_CHUNK_SECTIONS_COUNT; ++s)
-                        //                  {
-                        //                 ChunkSection *sec =
-                        //                 ch->data.sections[s]; if (!sec)
-                        //                     continue;
+                        for (int dx = 0; dx < grid_size; ++dx) {
+                            for (int dz = 0; dz < grid_size; ++dz) {
+                                int cx = min_cx + dx;
+                                int cz = min_cz + dz;
+                                load_chunk(cx, cz);
+                                auto ch = world.get_loaded_chunk(cx, cz);
+                                if (!ch) {
+                                    std::cout << std::format(
+                                        "Chunk ({}, {}) wasn't loaded\n", cx,
+                                        cz);
+                                } else {
+                                    GPUChunk chunk = {.location = ivec2(cx,
+                                    cz)}; int
+                                    block_data[CUNK_CHUNK_SIZE] [CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
+                                    int num_solid_block = 0;
+                                    for (size_t s = 0;
+                                         s < CUNK_CHUNK_SECTIONS_COUNT; ++s)
+                                         {
+                                        ChunkSection *sec =
+                                        ch->data.sections[s]; if (!sec)
+                                            continue;
 
-                        //                 for (size_t x = 0; x <
-                        //                 CUNK_CHUNK_SIZE; ++x)
-                        //                     for (size_t y = 0; y <
-                        //                     CUNK_CHUNK_SIZE;
-                        //                          ++y)
-                        //                         for (size_t z = 0;
-                        //                              z < CUNK_CHUNK_SIZE;
-                        //                              ++z) {
-                        //                             const unsigned int Y =
-                        //                                 y + s *
-                        //                                 CUNK_CHUNK_SIZE;
-                        //                             block_data[Y][x][z] =
-                        //                                 sec->block_data[y][z][x];
-                        //                             num_solid_block++;
-                        //                         }
-                        //             }
+                                        for (size_t x = 0; x <
+                                        CUNK_CHUNK_SIZE; ++x)
+                                            for (size_t y = 0; y <
+                                            CUNK_CHUNK_SIZE;
+                                                 ++y)
+                                                for (size_t z = 0;
+                                                     z < CUNK_CHUNK_SIZE;
+                                                     ++z) {
+                                                    const unsigned int Y =
+                                                        y + s *
+                                                        CUNK_CHUNK_SIZE;
+                                                    block_data[x][Y][z] =
+                                                        sec->block_data[y][z][x];
+                                                    num_solid_block++;
+                                                }
+                                    }
 
-                        //             std::cout << std::format(
-                        //                 "Loaded {} blocks at chunk ({} {})",
-                        //                 num_solid_block, cx, cz);
+                                    std::cout << std::format(
+                                        "Loaded {} blocks at chunk ({} {})",
+                                        num_solid_block, cx, cz);
 
-                        // std::unique_ptr<imr::Buffer> chunk_buffer =
-                        //     std::make_unique<imr::Buffer>(
-                        //         device, sizeof(block_data),
-                        //         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                        //             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                        //             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                        std::unique_ptr<imr::Buffer> chunk_buffer =
+                            std::make_unique<imr::Buffer>(
+                                device, sizeof(block_data),
+                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-                        //             chunk_buffer->uploadDataSync(
-                        //                 0, chunk_buffer->size, block_data);
-                        //             chunk.chunk_buffer =
-                        //                 chunk_buffer->device_address();
-                        //             chunks.push_back(chunk);
-                        //         }
-                        //     }
-                        // }
+                                    chunk_buffer->uploadDataSync(
+                                        0, chunk_buffer->size, block_data);
+                                    chunk.chunk_buffer =
+                                        chunk_buffer->device_address();
+                                    chunks.push_back(chunk);
+                                }
+                            }
+                        }
 
                         for (GPUChunk chunk : chunks) {
                             push_constants.chunk = {

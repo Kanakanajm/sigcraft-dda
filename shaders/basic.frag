@@ -36,7 +36,7 @@ layout(scalar, buffer_reference) buffer BlockBuffer {
 };
 
 layout(scalar, push_constant) uniform T {
-	VertexBuffer vertex_buffer;
+    VertexBuffer vertex_buffer;
     DebugBuffer debug_buffer;
     DebugBuffer debug2_buffer;
     TransformBuffer trans_buffer;
@@ -138,11 +138,11 @@ void main() {
 
 
     bvec3 mask = bvec3(false, true, false);
-    // if (abs(pos.x - 0.0) < EPSILON_FACE || abs(pos.x - 3.0) < EPSILON_FACE) {
+    // if (abs(pos.x - 0.0) < EPSILON_FACE || abs(pos.x - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
     //      mask = bvec3(true, false, false);
-    // } else if (abs(pos.y - 0.0) < EPSILON_FACE || abs(pos.y - 3.0) < EPSILON_FACE) {
+    // } else if (abs(pos.y - 0.0) < EPSILON_FACE || abs(pos.y - float(CUNK_CHUNK_MAX_HEIGHT)) < EPSILON_FACE) {
     //     mask = bvec3(false, true, false);
-    // } else if (abs(pos.z - 0.0) < EPSILON_FACE || abs(pos.z - 3.0) < EPSILON_FACE) {
+    // } else if (abs(pos.z - 0.0) < EPSILON_FACE || abs(pos.z - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
     //     mask = bvec3(false, false, true);
     // }
 
