@@ -109,10 +109,10 @@ struct GPUChunk {
 Camera camera = {.position =
                      {
                          0,
+                         385,
                          0,
-                         32,
                      },
-                 .rotation = {0,0},
+                 .rotation = {0, M_PI_2},
                  .fov = 90};
 
 CameraFreelookState camera_state = {
@@ -190,6 +190,8 @@ struct Shaders {
 int main(int argc, char **argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
     auto window = glfwCreateWindow(400, 400, "Example", nullptr, nullptr);
 
     if (argc < 2)
@@ -206,7 +208,10 @@ int main(int argc, char **argv) {
     });
 
     imr::Context context;
-    imr::Device device(context);
+    imr::Device device(context, [](vkb::PhysicalDeviceSelector& selector) {
+        // Customize the selector here
+        selector.set_name("NVIDIA GeForce MX250");
+    });
     imr::Swapchain swapchain(device, window);
     imr::FpsCounter fps_counter;
 
@@ -269,14 +274,20 @@ int main(int argc, char **argv) {
     // key/id = x*grid_size + z
     std::unordered_map<int, GPUChunk> chunks = {};
     chunks.reserve(num_chunks);
+    std::vector<ivec2> chunks_to_load = { 
+        ivec2(2, 2),
+        ivec2(2, 1),
+    };
 
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
         fps_counter.updateGlfwWindowTitle(window);
         // load chunks
-        for (int dx = center_chunk_pos.x - radius; dx <= center_chunk_pos.x + radius; dx++)
-        for (int dy = center_chunk_pos.y - radius; dy <= center_chunk_pos.y + radius; dy++) {
-            ivec2 chunk_pos = ivec2(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
+        // for (int dx = center_chunk_pos.x - radius; dx <= center_chunk_pos.x + radius; dx++)
+        // for (int dy = center_chunk_pos.y - radius; dy <= center_chunk_pos.y + radius; dy++) 
+        for (ivec2 chunk_pos: chunks_to_load)
+        {
+            // ivec2 chunk_pos = ivec2(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
             int chunk_id = chunk_pos.x * grid_size + chunk_pos.y;
             if (chunks.find(chunk_id) == chunks.end()) {
                 chunks[chunk_id] = { chunk_pos, nullptr };
@@ -286,177 +297,177 @@ int main(int argc, char **argv) {
                 // chunk id found but blocks not uploaded to buffer
                 auto world_chunk = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
                 if (!world_chunk) {
-                    world.load_chunk(chunk_pos.x, chunk_pos.y);
-                    std::cout << "Wait chunk to load\n";
-                } 
-                else {
-                    // upload chunk
-                    uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
-                    for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
-                        if (!world_chunk->data.sections[s]) {
-                            continue;
-                        }
-                    
-                        for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
-                        for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
-                        for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
-                            BlockData b = world_chunk->data.sections[s]->block_data[y][z][x];
-                            if (b != BlockAir) {
-                                blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
+                        world.load_chunk(chunk_pos.x, chunk_pos.y);
+                        std::cout << "Wait chunk to load\n";
+                    } 
+                    else {
+                        // upload chunk
+                        uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
+                        for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
+                            if (!world_chunk->data.sections[s]) {
+                                continue;
+                            }
+                        
+                            for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
+                            for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
+                            for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
+                                BlockData b = world_chunk->data.sections[s]->block_data[y][z][x];
+                                if (b != BlockAir) {
+                                    blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
+                                }
                             }
                         }
-                    }
-                
-                    std::shared_ptr<imr::Buffer> chunk_buffer = std::make_shared<imr::Buffer>(
-                        device, sizeof(blocks),
-                        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                            VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
                     
-                    chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
-                    chunks[chunk_id].chunk_buffer = chunk_buffer;
-                    std::cout << std::format("Chunk #{} at ({}, {}) uploaded\n", chunk_id, chunk_pos[0], chunk_pos[1]);
+                        std::shared_ptr<imr::Buffer> chunk_buffer = std::make_shared<imr::Buffer>(
+                            device, sizeof(blocks),
+                            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                        
+                        chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
+                        chunks[chunk_id].chunk_buffer = chunk_buffer;
+                        std::cout << std::format("Chunk #{} at ({}, {}) uploaded\n", chunk_id, chunk_pos[0], chunk_pos[1]);
+                    }
                 }
             }
-        }
 
-        swapchain.renderFrameSimplified(
-            [&](imr::Swapchain::SimplifiedRenderContext &context) {
-                camera_update(window, &camera_input);
-                camera_move_freelook(&camera, &camera_input, &camera_state,
-                                     delta);
+            swapchain.renderFrameSimplified(
+                [&](imr::Swapchain::SimplifiedRenderContext &context) {
+                    camera_update(window, &camera_input);
+                    camera_move_freelook(&camera, &camera_input, &camera_state,
+                                        delta);
 
-                mat4 m_cs_ws = identity_mat4;
-                m_cs_ws = mul_mat4(invert_mat4(camera_rotation_matrix(&camera)),  m_cs_ws);
-                transform_matrices.m_cs_ws_rot = m_cs_ws; // intermediate step (rotation only)
-                transform_matrices.m_cs_ws =  mul_mat4(translate_mat4(camera.position), m_cs_ws);
-                transform_matrices.camera_pos = camera.position;
+                    mat4 m_cs_ws = identity_mat4;
+                    m_cs_ws = mul_mat4(invert_mat4(camera_rotation_matrix(&camera)),  m_cs_ws);
+                    transform_matrices.m_cs_ws_rot = m_cs_ws; // intermediate step (rotation only)
+                    transform_matrices.m_cs_ws =  mul_mat4(translate_mat4(camera.position), m_cs_ws);
+                    transform_matrices.camera_pos = camera.position;
 
-                if (reload_shaders) {
-                    swapchain.drain();
-                    shaders = std::make_unique<Shaders>(device, swapchain);
-                    reload_shaders = false;
-                }
+                    if (reload_shaders) {
+                        swapchain.drain();
+                        shaders = std::make_unique<Shaders>(device, swapchain);
+                        reload_shaders = false;
+                    }
 
-                auto &image = context.image();
-                auto cmdbuf = context.cmdbuf();
+                    auto &image = context.image();
+                    auto cmdbuf = context.cmdbuf();
 
-                if (!depthBuffer ||
-                    depthBuffer->size().width != context.image().size().width ||
-                    depthBuffer->size().height !=
-                        context.image().size().height) {
-                    VkImageUsageFlagBits depthBufferFlags =
-                        static_cast<VkImageUsageFlagBits>(
-                            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-                    depthBuffer = std::make_unique<imr::Image>(
-                        device, VK_IMAGE_TYPE_2D, context.image().size(),
-                        VK_FORMAT_D32_SFLOAT, depthBufferFlags);
+                    if (!depthBuffer ||
+                        depthBuffer->size().width != context.image().size().width ||
+                        depthBuffer->size().height !=
+                            context.image().size().height) {
+                        VkImageUsageFlagBits depthBufferFlags =
+                            static_cast<VkImageUsageFlagBits>(
+                                VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+                        depthBuffer = std::make_unique<imr::Image>(
+                            device, VK_IMAGE_TYPE_2D, context.image().size(),
+                            VK_FORMAT_D32_SFLOAT, depthBufferFlags);
+
+                        vk.cmdPipelineBarrier2KHR(
+                            cmdbuf,
+                            tmpPtr((VkDependencyInfo){
+                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .dependencyFlags = 0,
+                                .imageMemoryBarrierCount = 1,
+                                .pImageMemoryBarriers = tmpPtr((
+                                    VkImageMemoryBarrier2){
+                                    .sType =
+                                        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                    .srcStageMask = 0,
+                                    .srcAccessMask = 0,
+                                    .dstStageMask =
+                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                    .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT |
+                                                    VK_ACCESS_2_MEMORY_READ_BIT,
+                                    .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                    .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                    .image = depthBuffer->handle(),
+                                    .subresourceRange =
+                                        depthBuffer
+                                            ->whole_image_subresource_range()})}));
+                    }
+
+                    vk.cmdClearColorImage(
+                        cmdbuf, image.handle(), VK_IMAGE_LAYOUT_GENERAL,
+                        tmpPtr((VkClearColorValue){
+                            .float32 = {0.0f, 0.0f, 0.0f, 1.0f},
+                        }),
+                        1, tmpPtr(image.whole_image_subresource_range()));
+
+                    vk.cmdClearDepthStencilImage(
+                        cmdbuf, depthBuffer->handle(), VK_IMAGE_LAYOUT_GENERAL,
+                        tmpPtr((VkClearDepthStencilValue){
+                            .depth = 1.0f,
+                            .stencil = 0,
+                        }),
+                        1, tmpPtr(depthBuffer->whole_image_subresource_range()));
 
                     vk.cmdPipelineBarrier2KHR(
                         cmdbuf,
                         tmpPtr((VkDependencyInfo){
                             .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                             .dependencyFlags = 0,
-                            .imageMemoryBarrierCount = 1,
-                            .pImageMemoryBarriers = tmpPtr((
-                                VkImageMemoryBarrier2){
-                                .sType =
-                                    VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                .srcStageMask = 0,
-                                .srcAccessMask = 0,
-                                .dstStageMask =
-                                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                            .memoryBarrierCount = 1,
+                            .pMemoryBarriers = tmpPtr((VkMemoryBarrier2){
+                                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                .dstStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
                                 .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT |
-                                                 VK_ACCESS_2_MEMORY_READ_BIT,
-                                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                                .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-                                .image = depthBuffer->handle(),
-                                .subresourceRange =
-                                    depthBuffer
-                                        ->whole_image_subresource_range()})}));
-                }
+                                                VK_ACCESS_2_MEMORY_READ_BIT,
+                            })}));
 
-                vk.cmdClearColorImage(
-                    cmdbuf, image.handle(), VK_IMAGE_LAYOUT_GENERAL,
-                    tmpPtr((VkClearColorValue){
-                        .float32 = {0.0f, 0.0f, 0.0f, 1.0f},
-                    }),
-                    1, tmpPtr(image.whole_image_subresource_range()));
+                    // update the push constant data on the host...
+                    mat4 m = identity_mat4;
+                    mat4 flip_y = identity_mat4;
+                    flip_y.rows[1][1] = -1;
+                    m = m * flip_y;
+                    mat4 view_mat =
+                        camera_get_view_mat4(&camera, context.image().size().width,
+                                            context.image().size().height);
+                    m = m * view_mat;
+                    // m = m * translate_mat4(vec3(-0.5, -0.5f, -0.5f));
+                    transform_matrices.mpp = m;
+                    trans_buffer->uploadDataSync(0, trans_buffer->size, &transform_matrices);
 
-                vk.cmdClearDepthStencilImage(
-                    cmdbuf, depthBuffer->handle(), VK_IMAGE_LAYOUT_GENERAL,
-                    tmpPtr((VkClearDepthStencilValue){
-                        .depth = 1.0f,
-                        .stencil = 0,
-                    }),
-                    1, tmpPtr(depthBuffer->whole_image_subresource_range()));
+                    auto &pipeline = shaders->pipeline;
+                    vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipeline->pipeline());
+                    
+                    context.frame().withRenderTargets(
+                        cmdbuf, {&image}, &*depthBuffer, [&]() {
+                            for (auto chunk : chunks) {
+                                if (!chunk.second.chunk_buffer) {
+                                    continue;
+                                }
+                                // chunk position in world space
+                                ivec3 pc = {
+                                    chunk.second.location[0] * CUNK_CHUNK_SIZE, 0,
+                                    chunk.second.location[1] * CUNK_CHUNK_SIZE };
 
-                vk.cmdPipelineBarrier2KHR(
-                    cmdbuf,
-                    tmpPtr((VkDependencyInfo){
-                        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                        .dependencyFlags = 0,
-                        .memoryBarrierCount = 1,
-                        .pMemoryBarriers = tmpPtr((VkMemoryBarrier2){
-                            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                            .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                            .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                            .dstStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
-                            .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT |
-                                             VK_ACCESS_2_MEMORY_READ_BIT,
-                        })}));
+                                push_constants.chunk = ivec4(pc, chunk.first);
+                                push_constants.block_buffer = chunk.second.chunk_buffer->device_address();
+                                push_constants.inChunk = camera.position.x >= pc.x && camera.position.x < pc.x + CUNK_CHUNK_SIZE &&
+                                    camera.position.y >= pc.y && camera.position.y < pc.y + CUNK_CHUNK_MAX_HEIGHT &&
+                                    camera.position.z >= pc.z && camera.position.z < pc.z + CUNK_CHUNK_SIZE;
 
-                // update the push constant data on the host...
-                mat4 m = identity_mat4;
-                mat4 flip_y = identity_mat4;
-                flip_y.rows[1][1] = -1;
-                m = m * flip_y;
-                mat4 view_mat =
-                    camera_get_view_mat4(&camera, context.image().size().width,
-                                         context.image().size().height);
-                m = m * view_mat;
-                // m = m * translate_mat4(vec3(-0.5, -0.5f, -0.5f));
-                transform_matrices.mpp = m;
-                trans_buffer->uploadDataSync(0, trans_buffer->size, &transform_matrices);
-
-                auto &pipeline = shaders->pipeline;
-                vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  pipeline->pipeline());
-                
-                context.frame().withRenderTargets(
-                    cmdbuf, {&image}, &*depthBuffer, [&]() {
-                        for (auto chunk : chunks) {
-                            if (!chunk.second.chunk_buffer) {
-                                continue;
+                                vkCmdPushConstants(cmdbuf, pipeline->layout(),
+                                                VK_SHADER_STAGE_VERTEX_BIT |
+                                                    VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                0, sizeof(push_constants),
+                                                &push_constants);
+                                vkCmdDraw(cmdbuf, 12 * 3, 1, 0, 0);
                             }
-                            // chunk position in world space
-                            ivec3 pc = {
-                                chunk.second.location[0] * CUNK_CHUNK_SIZE, 0,
-                                chunk.second.location[1] * CUNK_CHUNK_SIZE };
+                        });
 
-                            push_constants.chunk = ivec4(pc, chunk.first);
-                            push_constants.block_buffer = chunk.second.chunk_buffer->device_address();
-                            push_constants.inChunk = camera.position.x >= pc.x && camera.position.x <= pc.x + CUNK_CHUNK_SIZE &&
-                                camera.position.y >= pc.y && camera.position.y <= pc.y + CUNK_CHUNK_MAX_HEIGHT &&
-                                camera.position.z >= pc.z && camera.position.z <= pc.z + CUNK_CHUNK_SIZE;
+                    auto now = imr_get_time_nano();
+                    delta = ((float)((now - prev_frame) / 1000L)) / 1000000.0f;
+                    prev_frame = now;
 
-                            vkCmdPushConstants(cmdbuf, pipeline->layout(),
-                                               VK_SHADER_STAGE_VERTEX_BIT |
-                                                   VK_SHADER_STAGE_FRAGMENT_BIT,
-                                               0, sizeof(push_constants),
-                                               &push_constants);
-                            vkCmdDraw(cmdbuf, 12 * 3, 1, 0, 0);
-                        }
-                    });
+                    glfwPollEvents();
+                });
+        }
 
-                auto now = imr_get_time_nano();
-                delta = ((float)((now - prev_frame) / 1000L)) / 1000000.0f;
-                prev_frame = now;
-
-                glfwPollEvents();
-            });
+        swapchain.drain();
+        return 0;
     }
-
-    swapchain.drain();
-    return 0;
-}

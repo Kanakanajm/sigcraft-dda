@@ -86,6 +86,9 @@ bool textureFrontFace(ivec3 m) {
 }
 
 void main() {
+    // colorOut = vec4(color, 1);
+    // return;
+
     vec2 screen = gl_FragCoord.xy - vec2(0.5);
 
     ivec2 iscreen = ivec2(screen); // only used for debug buffer indexing
@@ -107,7 +110,7 @@ void main() {
     // object space
     vec3 pos = os.xyz;
     if (push_constants.inChunk) {
-        pos = push_constants.trans_buffer.camera_pos;
+        pos = push_constants.trans_buffer.camera_pos - vec3(push_constants.chunk.xyz);
     }
 
 
