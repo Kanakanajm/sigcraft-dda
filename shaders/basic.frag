@@ -147,13 +147,13 @@ void main() {
 
 
     bvec3 mask = bvec3(false, true, false);
-    // if (abs(pos.x - 0.0) < EPSILON_FACE || abs(pos.x - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
-    //      mask = bvec3(true, false, false);
-    // } else if (abs(pos.y - 0.0) < EPSILON_FACE || abs(pos.y - float(CUNK_CHUNK_MAX_HEIGHT)) < EPSILON_FACE) {
-    //     mask = bvec3(false, true, false);
-    // } else if (abs(pos.z - 0.0) < EPSILON_FACE || abs(pos.z - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
-    //     mask = bvec3(false, false, true);
-    // }
+    if (abs(pos.x - 0.0) < EPSILON_FACE || abs(pos.x - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
+         mask = bvec3(true, false, false);
+    } else if (abs(pos.y - 0.0) < EPSILON_FACE || abs(pos.y - float(CUNK_CHUNK_MAX_HEIGHT)) < EPSILON_FACE) {
+        mask = bvec3(false, true, false);
+    } else if (abs(pos.z - 0.0) < EPSILON_FACE || abs(pos.z - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
+        mask = bvec3(false, false, true);
+    }
 
     
     for (int i = 0; i < MAX_STEP; i++) {
@@ -170,6 +170,8 @@ void main() {
             if (mask.z) {
                 shadow = 0.75;
             }
+            float dda_depth = dot(sideDist, vec3(mask));
+            gl_FragDepth = (dda_depth + depth * float(push_constants.inChunk)) / (1001-0.1);
             // mix shadow color with block color
             colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
 

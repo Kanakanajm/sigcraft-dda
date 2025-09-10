@@ -218,7 +218,7 @@ int main(int argc, char **argv) {
     auto world = World(argv[1]);
 
     // pre-load all chunks around chunk_pos (no dynamic load)
-    int radius = 32;
+    int radius = 1;
     int grid_size = 2*radius + 1;
     int num_chunks = grid_size*grid_size;
 
@@ -283,11 +283,11 @@ int main(int argc, char **argv) {
         fps_counter.tick();
         fps_counter.updateGlfwWindowTitle(window);
         // load chunks
-        // for (int dx = center_chunk_pos.x - radius; dx <= center_chunk_pos.x + radius; dx++)
-        // for (int dy = center_chunk_pos.y - radius; dy <= center_chunk_pos.y + radius; dy++) 
-        for (ivec2 chunk_pos: chunks_to_load)
+        for (int dx = center_chunk_pos.x - radius; dx <= center_chunk_pos.x + radius; dx++)
+        for (int dy = center_chunk_pos.y - radius; dy <= center_chunk_pos.y + radius; dy++) 
+        // for (ivec2 chunk_pos: chunks_to_load)
         {
-            // ivec2 chunk_pos = ivec2(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
+            ivec2 chunk_pos = ivec2(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
             int chunk_id = chunk_pos.x * grid_size + chunk_pos.y;
             if (chunks.find(chunk_id) == chunks.end()) {
                 chunks[chunk_id] = { chunk_pos, nullptr };
