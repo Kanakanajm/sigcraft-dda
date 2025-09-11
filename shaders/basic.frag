@@ -147,34 +147,43 @@ void main() {
 
 
     bvec3 mask = bvec3(false, true, false);
-    if (abs(pos.x - 0.0) < EPSILON_FACE || abs(pos.x - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
-         mask = bvec3(true, false, false);
-    } else if (abs(pos.y - 0.0) < EPSILON_FACE || abs(pos.y - float(CUNK_CHUNK_MAX_HEIGHT)) < EPSILON_FACE) {
-        mask = bvec3(false, true, false);
-    } else if (abs(pos.z - 0.0) < EPSILON_FACE || abs(pos.z - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
-        mask = bvec3(false, false, true);
-    }
+    // if (abs(pos.x - 0.0) < EPSILON_FACE || abs(pos.x - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
+    //      mask = bvec3(true, false, false);
+    // } else if (abs(pos.y - 0.0) < EPSILON_FACE || abs(pos.y - float(CUNK_CHUNK_MAX_HEIGHT)) < EPSILON_FACE) {
+    //     mask = bvec3(false, true, false);
+    // } else if (abs(pos.z - 0.0) < EPSILON_FACE || abs(pos.z - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
+    //     mask = bvec3(false, false, true);
+    // }
 
     
     for (int i = 0; i < MAX_STEP; i++) {
         // if hit block
         if (isBlock(map)) {
             float shadow;
+            float t;
             // fake shadow on sides
             if (mask.x) {
                 shadow = 0.5;
+                t = sideDist.x - deltaDist.x;
             }
             if (mask.y) {
                 shadow = 1.0;
+                t = sideDist.y - deltaDist.y;
             }
             if (mask.z) {
                 shadow = 0.75;
+                t = sideDist.z - deltaDist.z;
             }
-            float dda_depth = dot(sideDist, vec3(mask));
-            gl_FragDepth = (dda_depth + depth * float(push_constants.inChunk)) / (1001-0.1);
+
+            vec3 hit_os = pos + dir * t;
+            vec3 hit_ws = hit_os + vec3(push_constants.chunk.xyz);
+
+            vec4 ndc = push_constants.trans_buffer.mpp * vec4(hit_ws, 1.0);
+            float ndc_z = ndc.z / ndc.w;
+            gl_FragDepth = ndc_z;
+
             // mix shadow color with block color
             colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
-
             return;
         }
 

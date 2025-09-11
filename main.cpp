@@ -106,6 +106,26 @@ struct GPUChunk {
     std::shared_ptr<imr::Buffer> chunk_buffer;
 };
 
+struct Ivec2Key {
+    int x;
+    int y;
+};
+
+bool operator==(const Ivec2Key &lhs, const Ivec2Key &rhs) {
+    return lhs.x == rhs.x && lhs.y == rhs.y;
+}
+
+template<>
+struct std::hash<Ivec2Key>
+{
+    std::size_t operator()(const Ivec2Key& k) const noexcept
+    {
+        std::size_t h1 = std::hash<int>{}(k.x);
+        std::size_t h2 = std::hash<int>{}(k.y);
+        return h1 ^ (h2 << 1); // or use boost::hash_combine
+    }
+};
+
 Camera camera = {.position =
                      {
                          0,
@@ -187,6 +207,16 @@ struct Shaders {
     }
 };
 
+std::string print_vec3(const vec3 &v) {
+    return std::format("({:.2f}, {:.2f}, {:.2f})", v[0], v[1], v[2]);
+}
+
+void updateDebugGlfwWindowTitle(GLFWwindow *window, const ivec2& chunk_pos) {
+    glfwSetWindowTitle(window,
+                       std::format("{}, {}", chunk_pos[0], chunk_pos[1])
+                           .c_str());
+}
+
 int main(int argc, char **argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -218,7 +248,7 @@ int main(int argc, char **argv) {
     auto world = World(argv[1]);
 
     // pre-load all chunks around chunk_pos (no dynamic load)
-    int radius = 1;
+    int radius = 16;
     int grid_size = 2*radius + 1;
     int num_chunks = grid_size*grid_size;
 
@@ -272,7 +302,7 @@ int main(int argc, char **argv) {
     auto &vk = device.dispatch;
 
     // key/id = x*grid_size + z
-    std::unordered_map<int, GPUChunk> chunks = {};
+    std::unordered_map<Ivec2Key, GPUChunk> chunks = {};
     chunks.reserve(num_chunks);
     std::vector<ivec2> chunks_to_load = { 
         ivec2(2, 2),
@@ -281,19 +311,21 @@ int main(int argc, char **argv) {
 
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
-        fps_counter.updateGlfwWindowTitle(window);
+        camera_update(window, &camera_input);
+        camera_move_freelook(&camera, &camera_input, &camera_state, delta);
+
+
         // load chunks
         for (int dx = center_chunk_pos.x - radius; dx <= center_chunk_pos.x + radius; dx++)
         for (int dy = center_chunk_pos.y - radius; dy <= center_chunk_pos.y + radius; dy++) 
         // for (ivec2 chunk_pos: chunks_to_load)
         {
-            ivec2 chunk_pos = ivec2(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
-            int chunk_id = chunk_pos.x * grid_size + chunk_pos.y;
-            if (chunks.find(chunk_id) == chunks.end()) {
-                chunks[chunk_id] = { chunk_pos, nullptr };
+            Ivec2Key chunk_pos = Ivec2Key(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
+            if (chunks.find(chunk_pos) == chunks.end()) {
+                chunks[chunk_pos] = { ivec2(chunk_pos.x, chunk_pos.y), nullptr };
             } 
 
-            if (!chunks[chunk_id].chunk_buffer) {
+            if (!chunks[chunk_pos].chunk_buffer) {
                 // chunk id found but blocks not uploaded to buffer
                 auto world_chunk = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
                 if (!world_chunk) {
@@ -324,17 +356,22 @@ int main(int argc, char **argv) {
                                 VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
                         
                         chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
-                        chunks[chunk_id].chunk_buffer = chunk_buffer;
-                        std::cout << std::format("Chunk #{} at ({}, {}) uploaded\n", chunk_id, chunk_pos[0], chunk_pos[1]);
+                        chunks[chunk_pos].chunk_buffer = chunk_buffer;
+                        std::cout << std::format("Chunk at ({}, {}) uploaded\n", chunk_pos.x, chunk_pos.y);
                     }
                 }
             }
+        
+        int current_cx = camera.position.x / CUNK_CHUNK_SIZE - int(std::signbit(camera.position.x));
+        int current_cz = camera.position.z / CUNK_CHUNK_SIZE - int(std::signbit(camera.position.z));
+        Ivec2Key current_chunk_key = Ivec2Key(current_cx, current_cz);
+
+        updateDebugGlfwWindowTitle(window, ivec2(current_cx, current_cz));
+        bool in_any_chunk = chunks.find(current_chunk_key) != chunks.end() && camera.position.y >= 0 && camera.position.y < CUNK_CHUNK_MAX_HEIGHT;
 
             swapchain.renderFrameSimplified(
                 [&](imr::Swapchain::SimplifiedRenderContext &context) {
-                    camera_update(window, &camera_input);
-                    camera_move_freelook(&camera, &camera_input, &camera_state,
-                                        delta);
+
 
                     mat4 m_cs_ws = identity_mat4;
                     m_cs_ws = mul_mat4(invert_mat4(camera_rotation_matrix(&camera)),  m_cs_ws);
@@ -434,6 +471,8 @@ int main(int argc, char **argv) {
                     vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     pipeline->pipeline());
                     
+
+
                     context.frame().withRenderTargets(
                         cmdbuf, {&image}, &*depthBuffer, [&]() {
                             for (auto chunk : chunks) {
@@ -445,11 +484,12 @@ int main(int argc, char **argv) {
                                     chunk.second.location[0] * CUNK_CHUNK_SIZE, 0,
                                     chunk.second.location[1] * CUNK_CHUNK_SIZE };
 
-                                push_constants.chunk = ivec4(pc, chunk.first);
+                                push_constants.chunk = ivec4(pc, 0);
                                 push_constants.block_buffer = chunk.second.chunk_buffer->device_address();
-                                push_constants.inChunk = camera.position.x >= pc.x && camera.position.x < pc.x + CUNK_CHUNK_SIZE &&
-                                    camera.position.y >= pc.y && camera.position.y < pc.y + CUNK_CHUNK_MAX_HEIGHT &&
-                                    camera.position.z >= pc.z && camera.position.z < pc.z + CUNK_CHUNK_SIZE;
+                                push_constants.inChunk = in_any_chunk && chunk.first == current_chunk_key;
+                                // push_constants.inChunk = camera.position.x >= pc.x && camera.position.x < pc.x + CUNK_CHUNK_SIZE &&
+                                //     camera.position.y >= pc.y && camera.position.y < pc.y + CUNK_CHUNK_MAX_HEIGHT &&
+                                //     camera.position.z >= pc.z && camera.position.z < pc.z + CUNK_CHUNK_SIZE;
 
                                 vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                 VK_SHADER_STAGE_VERTEX_BIT |
@@ -458,6 +498,26 @@ int main(int argc, char **argv) {
                                                 &push_constants);
                                 vkCmdDraw(cmdbuf, 12 * 3, 1, 0, 0);
                             }
+                        //     if (in_any_chunk && chunks[current_chunk_key].chunk_buffer) {
+                        //     // chunk position in world space
+                        //         ivec3 pc = {
+                        //             chunks[current_chunk_key].location[0] * CUNK_CHUNK_SIZE, 0,
+                        //             chunks[current_chunk_key].location[1] * CUNK_CHUNK_SIZE };
+
+                        //         push_constants.chunk = ivec4(pc, 0);
+                        //         push_constants.block_buffer = chunks[current_chunk_key].chunk_buffer->device_address();
+                        //         push_constants.inChunk = true;
+                        //         // push_constants.inChunk = camera.position.x >= pc.x && camera.position.x < pc.x + CUNK_CHUNK_SIZE &&
+                        //         //     camera.position.y >= pc.y && camera.position.y < pc.y + CUNK_CHUNK_MAX_HEIGHT &&
+                        //         //     camera.position.z >= pc.z && camera.position.z < pc.z + CUNK_CHUNK_SIZE;
+
+                        //         vkCmdPushConstants(cmdbuf, pipeline->layout(),
+                        //                         VK_SHADER_STAGE_VERTEX_BIT |
+                        //                             VK_SHADER_STAGE_FRAGMENT_BIT,
+                        //                         0, sizeof(push_constants),
+                        //                         &push_constants);
+                        //         vkCmdDraw(cmdbuf, 12 * 3, 1, 0, 0);
+                        //     }
                         });
 
                     auto now = imr_get_time_nano();
