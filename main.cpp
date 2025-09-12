@@ -71,15 +71,15 @@ Cube make_cube() {
     // top face
     add_face(H, D, C, G, vec3(0, 1, 0));
     // north face
-    add_face(A, B, C, D, vec3(1, 0, 0));
+    add_face(A, B, C, D, vec3(0, 0, 1));
     // west face
-    add_face(A, D, H, E, vec3(0, 0, 1));
+    add_face(A, D, H, E, vec3(1, 0, 0));
     // east face
-    add_face(F, G, C, B, vec3(1, 0, 1));
+    add_face(F, G, C, B, vec3(1, 0, 0));
     // south face
-    add_face(E, H, G, F, vec3(0, 1, 1));
+    add_face(E, H, G, F, vec3(0, 0, 1));
     // bottom face
-    add_face(E, F, B, A, vec3(1, 1, 0));
+    add_face(E, F, B, A, vec3(0, 1, 0));
     assert(i == 12);
     return cube;
 }
@@ -248,7 +248,7 @@ int main(int argc, char **argv) {
     auto world = World(argv[1]);
 
     // pre-load all chunks around chunk_pos (no dynamic load)
-    int radius = 16;
+    int radius = 5;
     int grid_size = 2*radius + 1;
     int num_chunks = grid_size*grid_size;
 

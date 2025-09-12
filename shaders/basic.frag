@@ -146,15 +146,7 @@ void main() {
     push_constants.debug2_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(map, 99);
 
 
-    bvec3 mask = bvec3(false, true, false);
-    if (abs(pos.x - 0.0) < EPSILON_FACE || abs(pos.x - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
-         mask = bvec3(true, false, false);
-    } else if (abs(pos.y - 0.0) < EPSILON_FACE || abs(pos.y - float(CUNK_CHUNK_MAX_HEIGHT)) < EPSILON_FACE) {
-        mask = bvec3(false, true, false);
-    } else if (abs(pos.z - 0.0) < EPSILON_FACE || abs(pos.z - float(CUNK_CHUNK_SIZE)) < EPSILON_FACE) {
-        mask = bvec3(false, false, true);
-    }
-
+    bvec3 mask = bvec3(color);
     
     for (int i = 0; i < MAX_STEP; i++) {
         // if hit block
@@ -175,10 +167,11 @@ void main() {
                 t = sideDist.z - deltaDist.z;
             }
 
-            if (i == 0) {
-                t = 0;
-            }
             vec3 hit_os = pos + dir * t;
+
+            if (i == 0) {
+                hit_os = os.xyz;
+            }
 
             vec3 hit_ws = hit_os + vec3(push_constants.chunk.xyz);
 
