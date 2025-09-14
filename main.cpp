@@ -13,6 +13,7 @@
 using namespace nasl;
 
 struct GPUChunk {
+    ivec2 absolute_pos;
     int data[384][16][16];
 };
 
@@ -50,6 +51,11 @@ struct Shaders {
     Shaders(imr::Device &d) : dda(d, "dda.spv") {}
 };
 
+inline int wrap_mod(int a, int m) {
+    int r = a % m;
+    return (r < 0) ? r + m : r;
+}
+
 int main(int argc, char **argv) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -75,12 +81,12 @@ int main(int argc, char **argv) {
 
     auto world = World(argv[1]);
 
-    const int radius = 6;
+    const int radius = 5;
     const int grid_size = 2 * radius + 1;
     const int chunk_count = grid_size * grid_size;
 
-    std::vector<GPUChunk> gpu_chunks;
-    gpu_chunks.resize(chunk_count);
+    std::vector<GPUChunk> gpu_chunks(chunk_count);
+    std::vector<bool> gpu_chunk_valid(chunk_count, false);
 
     VkDeviceSize chunk_bytes = VkDeviceSize(chunk_count * sizeof(GPUChunk));
 
@@ -89,12 +95,46 @@ int main(int argc, char **argv) {
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
+    auto load_chunk = [&](int cx, int cz) {
+        auto loaded = world.get_loaded_chunk(cx, cz);
+        if (!loaded)
+            world.load_chunk(cx, cz);
+    };
+
+    auto pack_chunk = [&](int cx, int cz, GPUChunk &dst) {
+        std::memset(&dst, 0, sizeof(GPUChunk));
+
+        auto ch = world.get_loaded_chunk(cx, cz);
+        if (!ch)
+            return false;
+
+        for (unsigned int s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; ++s) {
+            ChunkSection *sec = ch->data.sections[s];
+            if (!sec)
+                continue;
+
+            for (unsigned int x = 0; x < CUNK_CHUNK_SIZE; ++x)
+                for (unsigned int y = 0; y < CUNK_CHUNK_SIZE; ++y)
+                    for (unsigned int z = 0; z < CUNK_CHUNK_SIZE; ++z) {
+                        const unsigned int Y = y + s * CUNK_CHUNK_SIZE;
+                        dst.data[Y][x][z] = sec->block_data[y][z][x];
+                    }
+        }
+
+        dst.absolute_pos = {cx, cz};
+        return true;
+    };
+
     auto prev_frame = imr_get_time_nano();
     float delta = 0;
 
     auto shaders = std::make_unique<Shaders>(device);
 
     auto &vk = device.dispatch;
+
+    int prev_cx = INT32_MIN;
+    int prev_cz = INT32_MIN;
+
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
         fps_counter.updateGlfwWindowTitle(window);
@@ -150,62 +190,44 @@ int main(int argc, char **argv) {
 
                 ivec2 chunk_pos = ivec2(player_chunk_x, player_chunk_z);
 
-                for (auto chunk : world.loaded_chunks()) {
-                    if (abs(chunk->cx - player_chunk_x) > radius ||
-                        abs(chunk->cz - player_chunk_z) > radius) {
-                        world.unload_chunk(chunk.get());
-                    }
-                }
+                if (player_chunk_x != prev_cx || player_chunk_z != prev_cz) {
+                    
+                    prev_cx = player_chunk_x;
+                    prev_cz = player_chunk_z;
 
-                auto load_chunk = [&](int cx, int cz) {
-                    auto loaded = world.get_loaded_chunk(cx, cz);
-                    if (!loaded)
-                        world.load_chunk(cx, cz);
-                };
+                    for (int dz = -radius; dz <= radius; ++dz)
+                        for (int dx = -radius; dx <= radius; ++dx) {
+                            load_chunk(player_chunk_x + dx,
+                                       player_chunk_z + dz);
+                        }
 
-                auto pack_chunk = [&](int cx, int cz, GPUChunk &dst) {
-                    std::memset(&dst, 0, sizeof(GPUChunk));
+                    for (int dz = -radius; dz <= radius; ++dz)
+                        for (int dx = -radius; dx <= radius; ++dx) {
+                            int cx = player_chunk_x + dx;
+                            int cz = player_chunk_z + dz;
 
-                    auto ch = world.get_loaded_chunk(cx, cz);
-                    if (!ch)
-                        return;
+                            int sx = wrap_mod(cx, grid_size); //if i dont do this, negative coords break
+                            int sz = wrap_mod(cz, grid_size);
+                            int slot = sz * grid_size + sx;
 
-                    for (unsigned int s = 0; s < CUNK_CHUNK_SECTIONS_COUNT;
-                         ++s) {
-                        ChunkSection *sec = ch->data.sections[s];
-                        if (!sec)
-                            continue;
-
-                        for (unsigned int x = 0; x < CUNK_CHUNK_SIZE; ++x)
-                            for (unsigned int y = 0; y < CUNK_CHUNK_SIZE; ++y)
-                                for (unsigned int z = 0; z < CUNK_CHUNK_SIZE;
-                                     ++z) {
-                                    const unsigned int Y =
-                                        y + s * CUNK_CHUNK_SIZE;
-                                    dst.data[Y][x][z] =
-                                        sec->block_data[y][z][x];
+                            if (gpu_chunk_valid[slot]) {
+                                const GPUChunk &cur = gpu_chunks[slot];
+                                if (cur.absolute_pos.x == cx &&
+                                    cur.absolute_pos.y == cz) {
+                                    continue;
                                 }
-                    }
-                };
+                            }
 
-                /*
-                00 01 02
-                10 11 12
-                20 21 22
-                */
-                // 11 - player pos / chunk pos
-                int min_cx = player_chunk_x - radius;
-                int min_cz = player_chunk_z - radius;
+                            GPUChunk &dst = gpu_chunks[slot];
+                            bool ok = pack_chunk(cx, cz, dst);
+                            gpu_chunk_valid[slot] = ok;
+                        }
 
-                for (int dx = 0; dx < grid_size; ++dx)
-                    for (int dz = 0; dz < grid_size; ++dz) {
-                        int cx = min_cx + dx;
-                        int cz = min_cz + dz;
-                        load_chunk(cx, cz);
-                        pack_chunk(cx, cz, gpu_chunks[dz * grid_size + dx]);
-                    }
-
-                chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
+                    const size_t chunk_bytes =
+                        gpu_chunks.size() * sizeof(GPUChunk);
+                    chunk_buffer->uploadDataSync(0, chunk_bytes,
+                                                 gpu_chunks.data());
+                }
 
                 push_constants.chunk_buffer = chunk_buffer->device_address();
                 push_constants.chunk_pos = chunk_pos;
