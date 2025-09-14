@@ -26,9 +26,8 @@ layout(scalar, buffer_reference) buffer DebugBuffer {
 };
 
 layout(scalar, buffer_reference) buffer TransformBuffer {
-    mat4 mpp; // perspective projection matrix
-    mat4 m_cs_ws; // camera space to world space
-    mat4 m_cs_ws_rot; // camera space to world space, rotation only
+    mat4 mpp; // perspective projection matrix, world space -> clip space
+    mat4 mpp_inv; // inverse of perspective projection matrix, clip space -> world space
     vec3 camera_pos;
 };
 
@@ -86,53 +85,55 @@ bool textureFrontFace(ivec3 m) {
 }
 
 void main() {
-    // colorOut = vec4(color, 1);
-    // return;
-
     vec2 screen = gl_FragCoord.xy - vec2(0.5);
 
-    ivec2 iscreen = ivec2(screen); // only used for debug buffer indexing
+    ivec2 iscreen = ivec2(screen); // for debug buffer indexing only
 
-    vec2 ndc = screen / vec2(200) - vec2(1); // [-1, 1], 2 * (screen / image.xy) - 1
-    ndc.y = -ndc.y;
+    screen = screen / vec2(200) - 1; // should be dynamic
+    vec4 clip_space = vec4(screen, gl_FragCoord.z, 1);
 
-    float depth = 1 / gl_FragCoord.w; // depth to the camera not the near plane
+    vec4 world_space = push_constants.trans_buffer.mpp_inv * clip_space;
+    world_space /= world_space.w;
 
-    vec3 cs = vec3(depth * ndc, -depth);
+    vec4 dir_world_space = world_space - vec4(push_constants.trans_buffer.camera_pos, 0);
 
-
-    vec4 ws = push_constants.trans_buffer.m_cs_ws * vec4(cs, 1); // camera translation
-
-    vec4 os = ws - vec4(vec3(push_constants.chunk.xyz), 0);
-
-    vec3 dir = normalize((push_constants.trans_buffer.m_cs_ws * vec4(cs, 0)).xyz);
-
-    // object space
-    vec3 pos = os.xyz;
+    // if camera inside current chunk, there is no need for remapping
     if (push_constants.inChunk) {
-        pos = push_constants.trans_buffer.camera_pos - vec3(push_constants.chunk.xyz);
+        world_space = vec4(push_constants.trans_buffer.camera_pos, 1);
     }
 
+    // no object rotation for now
+    vec4 object_space = world_space - vec4(push_constants.chunk.xyz, 0);
+    vec4 dir_object_space = dir_world_space; 
+
+    // dir & pos are in object space, ready for dda
+    vec3 dir = normalize(dir_object_space.xyz);
+    vec3 pos = object_space.xyz;
 
     // clamp to [0, CUNK_CHUNK_SIZE) x [0, CUNK_CHUNK_MAX_HEIGHT) x [0, CUNK_CHUNK_SIZE)
     pos.x = clamp(pos.x, 0, CUNK_CHUNK_SIZE - EPSILON_CLAMP);
     pos.y = clamp(pos.y, 0, CUNK_CHUNK_MAX_HEIGHT - EPSILON_CLAMP);
     pos.z = clamp(pos.z, 0, CUNK_CHUNK_SIZE - EPSILON_CLAMP);
 
+    // debug saves
+    push_constants.debug_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(color, 1);
+
     ivec3 map = ivec3(pos);
 
     // show dir debug
     // colorOut = vec4(dir, 1.0);
+    // return;
 
     // show coverage
     // colorOut = vec4(float(inRange(map)));
 
     // show object space index
     // colorOut = vec4(os_palette(map), 1) * float(inRange(map));
+    // return;
 
     // show front face only
     // colorOut = vec4(float(textureFrontFace(map)));
-
+    
     // dda
     vec3 deltaDist = abs(1 / dir);
 
@@ -140,11 +141,6 @@ void main() {
 
     vec3 sideDist =
         (sign(dir) * (vec3(map) - pos) + (sign(dir) * 0.5) + 0.5) * deltaDist;
-
-    // debug saves
-    push_constants.debug_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(rayStep, 99);
-    push_constants.debug2_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(map, 99);
-
 
     bvec3 mask = bvec3(color);
     
@@ -167,21 +163,23 @@ void main() {
                 t = sideDist.z - deltaDist.z;
             }
 
-            vec3 hit_os = pos + dir * t;
+            vec3 hit_object_space = pos + dir * t;
 
             if (i == 0) {
-                hit_os = os.xyz;
+                hit_object_space = object_space.xyz;
             }
 
-            vec3 hit_ws = hit_os + vec3(push_constants.chunk.xyz);
+            vec3 hit_world_space = hit_object_space + vec3(push_constants.chunk.xyz);
 
-            vec4 ndc = push_constants.trans_buffer.mpp * vec4(hit_ws, 1.0);
-            float ndc_z = ndc.z / ndc.w;
-            gl_FragDepth = clamp(ndc_z, 0.0, 1.0);
+            vec4 hit_clip = push_constants.trans_buffer.mpp * vec4(hit_world_space, 1.0);
+            float hit_clip_z = hit_clip.z / hit_clip.w;
+            gl_FragDepth = hit_clip_z;
             
-            // colorOut = vec4(gl_FragDepth / 2);
             // mix shadow color with block color
-            colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
+            // colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
+            colorOut = vec4(mask, 1);
+            push_constants.debug2_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(push_constants.chunk.xyz, 1);
+
             return;
         }
 

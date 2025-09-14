@@ -85,9 +85,8 @@ Cube make_cube() {
 }
 
 struct {
-    mat4 mpp = identity_mat4; // perspective projection matrix
-    mat4 m_cs_ws = identity_mat4; // camera space to world space
-    mat4 m_cs_ws_rot = identity_mat4; // camera space to world space, rotation only
+    mat4 mpp = identity_mat4; // perspective projection matrix, world space -> clip space
+    mat4 mpp_inv = identity_mat4; // inverse of perspective projection matrix, clip space -> world space
     vec3 camera_pos;
 } transform_matrices;
 
@@ -248,7 +247,7 @@ int main(int argc, char **argv) {
     auto world = World(argv[1]);
 
     // pre-load all chunks around chunk_pos (no dynamic load)
-    int radius = 5;
+    int radius = 1;
     int grid_size = 2*radius + 1;
     int num_chunks = grid_size*grid_size;
 
@@ -314,7 +313,8 @@ int main(int argc, char **argv) {
         camera_update(window, &camera_input);
         camera_move_freelook(&camera, &camera_input, &camera_state, delta);
 
-
+        transform_matrices.camera_pos = camera.position;
+        
         // load chunks
         for (int dx = center_chunk_pos.x - radius; dx <= center_chunk_pos.x + radius; dx++)
         for (int dy = center_chunk_pos.y - radius; dy <= center_chunk_pos.y + radius; dy++) 
@@ -372,12 +372,18 @@ int main(int argc, char **argv) {
             swapchain.renderFrameSimplified(
                 [&](imr::Swapchain::SimplifiedRenderContext &context) {
 
-
-                    mat4 m_cs_ws = identity_mat4;
-                    m_cs_ws = mul_mat4(invert_mat4(camera_rotation_matrix(&camera)),  m_cs_ws);
-                    transform_matrices.m_cs_ws_rot = m_cs_ws; // intermediate step (rotation only)
-                    transform_matrices.m_cs_ws =  mul_mat4(translate_mat4(camera.position), m_cs_ws);
-                    transform_matrices.camera_pos = camera.position;
+                    mat4 m = identity_mat4;
+                    mat4 flip_y = identity_mat4;
+                    flip_y.rows[1][1] = -1;
+                    m = m * flip_y;
+                    mat4 view_mat =
+                        camera_get_view_mat4(&camera, context.image().size().width,
+                                            context.image().size().height);
+                    m = m * view_mat;
+                    transform_matrices.mpp = m;
+                    transform_matrices.mpp_inv = invert_mat4(m);
+                            
+                    trans_buffer->uploadDataSync(0, trans_buffer->size, &transform_matrices);
 
                     if (reload_shaders) {
                         swapchain.drain();
@@ -455,17 +461,7 @@ int main(int argc, char **argv) {
                             })}));
 
                     // update the push constant data on the host...
-                    mat4 m = identity_mat4;
-                    mat4 flip_y = identity_mat4;
-                    flip_y.rows[1][1] = -1;
-                    m = m * flip_y;
-                    mat4 view_mat =
-                        camera_get_view_mat4(&camera, context.image().size().width,
-                                            context.image().size().height);
-                    m = m * view_mat;
-                    // m = m * translate_mat4(vec3(-0.5, -0.5f, -0.5f));
-                    transform_matrices.mpp = m;
-                    trans_buffer->uploadDataSync(0, trans_buffer->size, &transform_matrices);
+                    
 
                     auto &pipeline = shaders->pipeline;
                     vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,

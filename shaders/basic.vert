@@ -18,9 +18,8 @@ layout(scalar, buffer_reference) buffer DebugBuffer {
 };
 
 layout(scalar, buffer_reference) buffer TransformBuffer {
-    mat4 mpp; // perspective projection matrix
-    mat4 m_cs_ws; // camera rotation matrix
-    mat4 m_cs_ws_rot; // camera space to world space, rotation only
+    mat4 mpp; // perspective projection matrix, world space -> clip space
+    mat4 mpp_inv; // inverse of perspective projection matrix, clip space -> world space
     vec3 camera_pos;
 };
 
