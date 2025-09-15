@@ -43,6 +43,7 @@ layout(scalar, push_constant) uniform T {
     BlockBuffer block_buffer;
     ivec4 chunk; // (x, y, z) position and id as w
     bool inChunk;
+    float rotate_rad;
 } push_constants;
 
 vec4 color_palette[14] = {
@@ -84,7 +85,26 @@ bool textureFrontFace(ivec3 m) {
     return inRange(m) && m.z == CUNK_CHUNK_SIZE - 1;
 }
 
+void main_() {
+    if (gl_FrontFacing)
+        colorOut = vec4(0,1,0,1); 
+    else
+        colorOut = vec4(1,0,0,1);
+}
+
 void main() {
+    mat4 rotateY = mat4(mat3(
+        cos(push_constants.rotate_rad), 0.0, sin(push_constants.rotate_rad),
+        0.0, 1.0, 0.0,
+        -sin(push_constants.rotate_rad), 0.0, cos(push_constants.rotate_rad)
+    ));
+
+    mat4 rotateYInv = mat4(mat3(
+        cos(-push_constants.rotate_rad), 0.0, sin(-push_constants.rotate_rad),
+        0.0, 1.0, 0.0,
+        -sin(-push_constants.rotate_rad), 0.0, cos(-push_constants.rotate_rad)
+    ));
+
     vec2 screen = gl_FragCoord.xy - vec2(0.5);
 
     ivec2 iscreen = ivec2(screen); // for debug buffer indexing only
@@ -103,8 +123,10 @@ void main() {
     }
 
     // no object rotation for now
-    vec4 object_space = world_space - vec4(push_constants.chunk.xyz, 0);
-    vec4 dir_object_space = dir_world_space; 
+    vec4 object_space = rotateYInv * (world_space - vec4(push_constants.chunk.xyz, 0));
+    object_space *= 0.995;
+    //object_space -= 0.002;
+    vec4 dir_object_space = rotateYInv * dir_world_space; 
 
     // dir & pos are in object space, ready for dda
     vec3 dir = normalize(dir_object_space.xyz);
@@ -169,15 +191,16 @@ void main() {
                 hit_object_space = object_space.xyz;
             }
 
-            vec3 hit_world_space = hit_object_space + vec3(push_constants.chunk.xyz);
+            vec4 hit_world_space = rotateY * vec4(hit_object_space, 1.0) + vec4(push_constants.chunk.xyz, 0);
 
-            vec4 hit_clip = push_constants.trans_buffer.mpp * vec4(hit_world_space, 1.0);
+            vec4 hit_clip = push_constants.trans_buffer.mpp * hit_world_space;
             float hit_clip_z = hit_clip.z / hit_clip.w;
             gl_FragDepth = hit_clip_z;
             
             // mix shadow color with block color
-            // colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
-            colorOut = vec4(mask, 1);
+            colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
+            //if (i == 0)
+            //    colorOut.rgb = color;
             push_constants.debug2_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(push_constants.chunk.xyz, 1);
 
             return;

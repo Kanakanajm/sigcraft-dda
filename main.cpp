@@ -98,11 +98,13 @@ struct {
     VkDeviceAddress block_buffer;
     ivec4 chunk;
     bool inChunk;
+    float rotate_rad;
 } push_constants;
 
 struct GPUChunk {
     ivec2 location;
     std::shared_ptr<imr::Buffer> chunk_buffer;
+    float rotate_rad = 0;
 };
 
 struct Ivec2Key {
@@ -177,10 +179,10 @@ struct Shaders {
                         VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 
                     .polygonMode = VK_POLYGON_MODE_FILL,
-                    .cullMode = VK_CULL_MODE_NONE,
+                    .cullMode = VK_CULL_MODE_BACK_BIT,
                     .frontFace = VK_FRONT_FACE_CLOCKWISE,
 
-                    .lineWidth = 1.0f,
+                    .lineWidth = 1.f,
                 },
             .multisampleState = imr::GraphicsPipeline::one_spp(),
             .depthStencilState = imr::GraphicsPipeline::simple_depth_testing(),
@@ -247,7 +249,7 @@ int main(int argc, char **argv) {
     auto world = World(argv[1]);
 
     // pre-load all chunks around chunk_pos (no dynamic load)
-    int radius = 1;
+    int radius = 2;
     int grid_size = 2*radius + 1;
     int num_chunks = grid_size*grid_size;
 
@@ -321,9 +323,10 @@ int main(int argc, char **argv) {
         // for (ivec2 chunk_pos: chunks_to_load)
         {
             Ivec2Key chunk_pos = Ivec2Key(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
+
             if (chunks.find(chunk_pos) == chunks.end()) {
                 chunks[chunk_pos] = { ivec2(chunk_pos.x, chunk_pos.y), nullptr };
-            } 
+            }
 
             if (!chunks[chunk_pos].chunk_buffer) {
                 // chunk id found but blocks not uploaded to buffer
@@ -483,9 +486,15 @@ int main(int argc, char **argv) {
                                 push_constants.chunk = ivec4(pc, 0);
                                 push_constants.block_buffer = chunk.second.chunk_buffer->device_address();
                                 push_constants.inChunk = in_any_chunk && chunk.first == current_chunk_key;
-                                // push_constants.inChunk = camera.position.x >= pc.x && camera.position.x < pc.x + CUNK_CHUNK_SIZE &&
-                                //     camera.position.y >= pc.y && camera.position.y < pc.y + CUNK_CHUNK_MAX_HEIGHT &&
-                                //     camera.position.z >= pc.z && camera.position.z < pc.z + CUNK_CHUNK_SIZE;
+                                if (chunk.first == Ivec2Key{0, 0}) {
+                                    std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::system_clock::now().time_since_epoch()
+                                    );
+                                    push_constants.rotate_rad = fmod((float)(ms.count() % 10000000 / 1000.0), M_PI * 2);
+                                }
+                                else {
+                                    push_constants.rotate_rad = 0;
+                                }
 
                                 vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                 VK_SHADER_STAGE_VERTEX_BIT |
