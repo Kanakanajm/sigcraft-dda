@@ -32,7 +32,7 @@ layout(scalar, buffer_reference) buffer TransformBuffer {
 };
 
 layout(scalar, buffer_reference) buffer BlockBuffer {
-    uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE];
+    uint blocks[CUNK_CHUNK_SIZE+2][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE+2];
 };
 
 layout(scalar, push_constant) uniform T {
@@ -63,11 +63,15 @@ vec3 os_palette(ivec3 m) {
 }
 
 bool inRange(ivec3 m) {
-    return all(greaterThanEqual(vec3(m), vec3(0))) && all(lessThan(vec2(m.xz), vec2(CUNK_CHUNK_SIZE))) && m.y < CUNK_CHUNK_MAX_HEIGHT;
+    return all(greaterThanEqual(vec3(m), vec3(-1))) && all(lessThan(vec2(m.xz), vec2(CUNK_CHUNK_SIZE+1))) && m.y < CUNK_CHUNK_MAX_HEIGHT;
+}
+
+uint getBlock(ivec3 m) {
+    return push_constants.block_buffer.blocks[m.x + 1][m.y][m.z + 1];
 }
 
 bool isBlock(ivec3 m) {
-    return inRange(m) && push_constants.block_buffer.blocks[m.x][m.y][m.z] != 0;
+    return inRange(m) && getBlock(m) != 0;
 }
 
 // should only be used in dda after inRange check!
@@ -169,6 +173,9 @@ void main() {
                 hit_object_space = object_space.xyz;
             }
 
+            hit_object_space.x = clamp(hit_object_space.x, 0.0, float(CUNK_CHUNK_SIZE) - EPSILON_CLAMP);
+            hit_object_space.z = clamp(hit_object_space.z, 0.0, float(CUNK_CHUNK_SIZE) - EPSILON_CLAMP);
+
             vec3 hit_world_space = hit_object_space + vec3(push_constants.chunk.xyz);
 
             vec4 hit_clip = push_constants.trans_buffer.mpp * vec4(hit_world_space, 1.0);
@@ -176,9 +183,8 @@ void main() {
             gl_FragDepth = hit_clip_z;
             
             // mix shadow color with block color
-            // colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
-            colorOut = vec4(mask, 1);
-            push_constants.debug2_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(push_constants.chunk.xyz, 1);
+            colorOut = shadow * blockColor(getBlock(map));
+            // colorOut = vec4(mask, 1);
 
             return;
         }

@@ -13,8 +13,6 @@ endif ()
 
 add_subdirectory(enklume)
 
-find_package(nasl)
-
 add_executable(sigcraft main.cpp camera.cpp chunk_mesh.cpp world.cpp)
 target_link_libraries(sigcraft imr enklume nasl::nasl)
 

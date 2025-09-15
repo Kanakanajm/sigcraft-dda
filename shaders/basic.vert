@@ -24,7 +24,7 @@ layout(scalar, buffer_reference) buffer TransformBuffer {
 };
 
 layout(scalar, buffer_reference) buffer BlockBuffer {
-    uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE];
+    uint blocks[CUNK_CHUNK_SIZE+2][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE+2];
 };
 
 layout(scalar, push_constant) uniform T {

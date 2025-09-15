@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
     auto world = World(argv[1]);
 
     // pre-load all chunks around chunk_pos (no dynamic load)
-    int radius = 1;
+    int radius = 16;
     int grid_size = 2*radius + 1;
     int num_chunks = grid_size*grid_size;
 
@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
                     } 
                     else {
                         // upload chunk
-                        uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
+                        uint blocks[CUNK_CHUNK_SIZE+2][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE+2] = {};
                         for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
                             if (!world_chunk->data.sections[s]) {
                                 continue;
@@ -345,10 +345,27 @@ int main(int argc, char **argv) {
                             for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
                                 BlockData b = world_chunk->data.sections[s]->block_data[y][z][x];
                                 if (b != BlockAir) {
-                                    blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
+                                    blocks[x+1][s * CUNK_CHUNK_SIZE + y][z+1] = b;
                                 }
                             }
                         }
+
+                        // pad x
+                        for (uint y = 0; y < CUNK_CHUNK_MAX_HEIGHT; y++)
+                        for (uint z = 1; z <= CUNK_CHUNK_SIZE; z++)
+                        {
+                            blocks[0][y][z] = blocks[1][y][z];
+                            blocks[CUNK_CHUNK_SIZE + 1][y][z] = blocks[CUNK_CHUNK_SIZE][y][z];
+                        }
+
+                        // pad z
+                        for (uint y = 0; y < CUNK_CHUNK_MAX_HEIGHT; y++)
+                        for (uint x = 1; x <= CUNK_CHUNK_SIZE; x++)
+                        {
+                            blocks[x][y][0] = blocks[x][y][1];
+                            blocks[x][y][CUNK_CHUNK_SIZE + 1] = blocks[x][y][CUNK_CHUNK_SIZE];
+                        }
+
                     
                         std::shared_ptr<imr::Buffer> chunk_buffer = std::make_shared<imr::Buffer>(
                             device, sizeof(blocks),
