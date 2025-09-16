@@ -110,6 +110,7 @@ struct {
 struct GPUChunk {
     ivec2 location;
     bool loaded = false;
+    bool load_request = false;
 };
 
 struct Ivec2Key {
@@ -336,36 +337,37 @@ int main(int argc, char **argv) {
 
             if (!chunks[chunk_pos].loaded) {
                 // chunk id found but blocks not uploaded to buffer
-                auto world_chunk = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
-                if (!world_chunk) {
+                if (!chunks[chunk_pos].load_request) {
                         world.load_chunk(chunk_pos.x, chunk_pos.y);
                         std::cout << "Wait chunk to load\n";
-                    } 
-                    else {
-                        // upload chunk
-                        uint blocks[CUNK_CHUNK_MAX_HEIGHT*CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE] = {};
-                        for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
-                            if (!world_chunk->data.sections[s]) {
-                                continue;
-                            }
-                            for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
-                            for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
-                            for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
-                                BlockData b = world_chunk->data.sections[s]->block_data[y][z][x];
-                                if (b != BlockAir) {
-                                    blocks[(s * CUNK_CHUNK_SIZE + y)*CUNK_HSLICE_SIZE+z*CUNK_CHUNK_SIZE+x] = b;
-                                }
+                        chunks[chunk_pos].load_request = true;
+                }
+                auto world_chunk = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
+                if (world_chunk) {
+                    // upload chunk
+                    uint blocks[CUNK_CHUNK_MAX_HEIGHT*CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE] = {};
+                    for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
+                        if (!world_chunk->data.sections[s]) {
+                            continue;
+                        }
+                        for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
+                        for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
+                        for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
+                            BlockData b = world_chunk->data.sections[s]->block_data[y][z][x];
+                            if (b != BlockAir) {
+                                blocks[(s * CUNK_CHUNK_SIZE + y)*CUNK_HSLICE_SIZE+z*CUNK_CHUNK_SIZE+x] = b;
                             }
                         }
+                    }
+                
+                    int chunk_index_x = chunk_pos.x - offset_x;
+                    int chunk_index_y = chunk_pos.y - offset_y;
+                    assert(chunk_index_x >= 0 && chunk_index_y >= 0);
+                    assert(chunk_index_x < GRID_SIZE && chunk_index_y < GRID_SIZE);
                     
-                        int chunk_index_x = chunk_pos.x - offset_x;
-                        int chunk_index_y = chunk_pos.y - offset_y;
-                        assert(chunk_index_x >= 0 && chunk_index_y >= 0);
-                        assert(chunk_index_x < GRID_SIZE && chunk_index_y < GRID_SIZE);
-                        
-                        block_data_buffer->uploadDataSync((chunk_index_x * GRID_SIZE + chunk_index_y) * 4 * CUNK_SIZE, 4*CUNK_SIZE, blocks);
-                        std::cout << std::format("Chunk at ({}, {}) uploaded\n", chunk_pos.x, chunk_pos.y);
-                        chunks[chunk_pos].loaded = true;
+                    block_data_buffer->uploadDataSync((chunk_index_x * GRID_SIZE + chunk_index_y) * 4 * CUNK_SIZE, 4*CUNK_SIZE, blocks);
+                    std::cout << std::format("Chunk at ({}, {}) uploaded\n", chunk_pos.x, chunk_pos.y);
+                    chunks[chunk_pos].loaded = true;
                     }
                 }
             }
