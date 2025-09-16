@@ -104,7 +104,7 @@ struct {
     VkDeviceAddress trans_buffer;
     VkDeviceAddress block_buffer;
     ivec4 chunk;
-    ivec2 offset;
+    uint chunk_index;
 } push_constants;
 
 struct GPUChunk {
@@ -323,9 +323,7 @@ int main(int argc, char **argv) {
 
         int offset_x = center_chunk_pos.x - RADIUS;
         int offset_y = center_chunk_pos.y - RADIUS;
-        
-        push_constants.offset = ivec2(offset_x, offset_y);
-        
+                
         // load chunks
         for (int dx = center_chunk_pos.x - RADIUS; dx <= center_chunk_pos.x + RADIUS; dx++)
         for (int dy = center_chunk_pos.y - RADIUS; dy <= center_chunk_pos.y + RADIUS; dy++) 
@@ -491,6 +489,8 @@ int main(int argc, char **argv) {
                                     chunk.second.location[1],
                                     chunk_id++,
                                     int(in_any_chunk && chunk.first == current_chunk_key));
+
+                                push_constants.chunk_index = (chunk.second.location[0] - offset_x) * GRID_SIZE + (chunk.second.location[1] - offset_y);
 
                                 vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                 VK_SHADER_STAGE_VERTEX_BIT |

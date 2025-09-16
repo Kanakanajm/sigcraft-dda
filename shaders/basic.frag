@@ -51,7 +51,7 @@ layout(scalar, push_constant) uniform T {
     TransformBuffer trans_buffer;
     BlockBuffer block_buffer;
     ivec4 chunk; // (cx, cz, id, inChunk)
-    ivec2 offset;
+    uint chunk_index;
 } push_constants;
 
 vec4 color_palette[14] = {
@@ -75,14 +75,9 @@ bool inRange(ivec3 m) {
     return all(greaterThanEqual(vec3(m), vec3(0))) && all(lessThan(vec2(m.xz), vec2(CUNK_CHUNK_SIZE))) && m.y < CUNK_CHUNK_MAX_HEIGHT;
 }
 
-uint getChunk() {
-    ivec2 idx = push_constants.chunk.xy - push_constants.offset;
-    return idx.x * GRID_SIZE + idx.y;
-}
-
 // should only be used in dda after inRange check!
 uint getBlock(ivec3 m) {
-    return push_constants.block_buffer.blocks[getChunk()*CUNK_SIZE + m.y*CUNK_HSLICE_SIZE + m.z*CUNK_CHUNK_SIZE + m.x];
+    return push_constants.block_buffer.blocks[push_constants.chunk_index*CUNK_SIZE + m.y*CUNK_HSLICE_SIZE + m.z*CUNK_CHUNK_SIZE + m.x];
 }   
 
 bool isBlock(ivec3 m) {
@@ -196,17 +191,25 @@ void main() {
                 t = sideDist.z - deltaDist.z;
             }
 
-            vec3 hit_object_space = pos + dir * t;
+            if (push_constants.chunk.w == 1) {
+                vec3 hit_object_space = pos + dir * t;
 
-            if (i == 0) {
-                hit_object_space = object_space.xyz;
+                if (i == 0) {
+                    hit_object_space = object_space.xyz;
+                }
+
+                vec3 hit_world_space = hit_object_space + vec3(chunk_pos);
+
+                vec4 hit_clip = push_constants.trans_buffer.mpp * vec4(hit_world_space, 1.0);
+                float hit_clip_z = hit_clip.z / hit_clip.w;
+                gl_FragDepth = hit_clip_z;
+
+            }
+            else {
+                gl_FragDepth = gl_FragCoord.z;
             }
 
-            vec3 hit_world_space = hit_object_space + vec3(chunk_pos);
 
-            vec4 hit_clip = push_constants.trans_buffer.mpp * vec4(hit_world_space, 1.0);
-            float hit_clip_z = hit_clip.z / hit_clip.w;
-            gl_FragDepth = hit_clip_z;
             
             // mix shadow color with block color
             colorOut = shadow * blockColor(getBlock(map));
