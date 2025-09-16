@@ -3,7 +3,7 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
 
-#define MAX_RAY_STEPS 256
+#define MAX_RAY_STEPS 512
 
 layout(set = 0, binding = 0) uniform image2D output_image;
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;

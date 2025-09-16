@@ -13,7 +13,7 @@
 using namespace nasl;
 
 struct GPUChunk {
-    ivec2 absolute_pos;
+    ivec2 absolute_pos = { 0, 0 };
     int data[384][16][16];
 };
 
@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
 
     auto world = World(argv[1]);
 
-    const int radius = 5;
+    const int radius = 15;
     const int grid_size = 2 * radius + 1;
     const int chunk_count = grid_size * grid_size;
 
@@ -95,15 +95,24 @@ int main(int argc, char **argv) {
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
+    chunk_buffer->uploadDataSync(0, chunk_bytes, gpu_chunks.data());
+
     auto load_chunk = [&](int cx, int cz) {
         auto loaded = world.get_loaded_chunk(cx, cz);
         if (!loaded)
             world.load_chunk(cx, cz);
     };
 
-    auto pack_chunk = [&](int cx, int cz, GPUChunk &dst) {
+    auto invalidate_chunk = [&](int cx, int cz, GPUChunk& dst) {
         std::memset(&dst, 0, sizeof(GPUChunk));
 
+        int sx = wrap_mod(cx, grid_size);
+        int sz = wrap_mod(cz, grid_size);
+        int slot = sz * grid_size + sx;
+        chunk_buffer->uploadDataSync(sizeof(GPUChunk) * slot, sizeof(dst), &dst);
+    };
+
+    auto pack_chunk = [&](int cx, int cz, GPUChunk& dst) {
         auto ch = world.get_loaded_chunk(cx, cz);
         if (!ch)
             return false;
@@ -122,6 +131,11 @@ int main(int argc, char **argv) {
         }
 
         dst.absolute_pos = {cx, cz};
+
+        int sx = wrap_mod(cx, grid_size); //if i dont do this, negative coords break
+        int sz = wrap_mod(cz, grid_size);
+        int slot = sz * grid_size + sx;
+        chunk_buffer->uploadDataSync(sizeof(GPUChunk) * slot, sizeof(dst), &dst);
         return true;
     };
 
@@ -131,9 +145,6 @@ int main(int argc, char **argv) {
     auto shaders = std::make_unique<Shaders>(device);
 
     auto &vk = device.dispatch;
-
-    int prev_cx = INT32_MIN;
-    int prev_cz = INT32_MIN;
 
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
@@ -190,44 +201,40 @@ int main(int argc, char **argv) {
 
                 ivec2 chunk_pos = ivec2(player_chunk_x, player_chunk_z);
 
-                if (player_chunk_x != prev_cx || player_chunk_z != prev_cz) {
-                    
-                    prev_cx = player_chunk_x;
-                    prev_cz = player_chunk_z;
-
-                    for (int dz = -radius; dz <= radius; ++dz)
-                        for (int dx = -radius; dx <= radius; ++dx) {
-                            load_chunk(player_chunk_x + dx,
-                                       player_chunk_z + dz);
-                        }
-
-                    for (int dz = -radius; dz <= radius; ++dz)
-                        for (int dx = -radius; dx <= radius; ++dx) {
-                            int cx = player_chunk_x + dx;
-                            int cz = player_chunk_z + dz;
-
-                            int sx = wrap_mod(cx, grid_size); //if i dont do this, negative coords break
-                            int sz = wrap_mod(cz, grid_size);
-                            int slot = sz * grid_size + sx;
-
-                            if (gpu_chunk_valid[slot]) {
-                                const GPUChunk &cur = gpu_chunks[slot];
-                                if (cur.absolute_pos.x == cx &&
-                                    cur.absolute_pos.y == cz) {
-                                    continue;
-                                }
-                            }
-
-                            GPUChunk &dst = gpu_chunks[slot];
-                            bool ok = pack_chunk(cx, cz, dst);
-                            gpu_chunk_valid[slot] = ok;
-                        }
-
-                    const size_t chunk_bytes =
-                        gpu_chunks.size() * sizeof(GPUChunk);
-                    chunk_buffer->uploadDataSync(0, chunk_bytes,
-                                                 gpu_chunks.data());
+                for (auto chunk : world.loaded_chunks()) {
+                    if (abs(chunk->cx - player_chunk_x) > radius ||
+                        abs(chunk->cz - player_chunk_z) > radius) {
+                        world.unload_chunk(chunk.get());
+                        continue;
+                    }
                 }
+
+                for (int dz = -radius; dz <= radius; ++dz)
+                    for (int dx = -radius; dx <= radius; ++dx) {
+                        load_chunk(player_chunk_x + dx, player_chunk_z + dz);
+
+                        int cx = player_chunk_x + dx;
+                        int cz = player_chunk_z + dz;
+
+                        int sx = wrap_mod(cx, grid_size); //if i dont do this, negative coords break
+                        int sz = wrap_mod(cz, grid_size);
+                        int slot = sz * grid_size + sx;
+                        GPUChunk &dst = gpu_chunks[slot];
+
+                        if (gpu_chunk_valid[slot]) {
+                            const GPUChunk &cur = gpu_chunks[slot];
+                            if (cur.absolute_pos.x == cx &&
+                                cur.absolute_pos.y == cz) {
+                                continue;
+                            } else {
+                                invalidate_chunk(cx, cz, dst);
+                                gpu_chunk_valid[slot] = false;
+                            }
+                        }
+
+                        if (pack_chunk(cx, cz, dst))
+                            gpu_chunk_valid[slot] = true;
+                    }
 
                 push_constants.chunk_buffer = chunk_buffer->device_address();
                 push_constants.chunk_pos = chunk_pos;
@@ -247,6 +254,10 @@ int main(int argc, char **argv) {
                 prev_frame = now;
 
                 glfwPollEvents();
+
+                context.addCleanupAction([=](){
+                    delete shader_bind_helper;
+                });
             });
     }
 
