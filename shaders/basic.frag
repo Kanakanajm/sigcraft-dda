@@ -6,6 +6,7 @@
 #define MAX_STEP 100 // visibility
 #define CUNK_CHUNK_SIZE 16
 #define CUNK_CHUNK_MAX_HEIGHT 384
+#define CUNK_HSLICE_SIZE CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE
 #define EPSILON 1e-3
 #define EPSILON_FACE 1e-3
 #define EPSILON_CLAMP 1e-4
@@ -32,7 +33,7 @@ layout(scalar, buffer_reference) buffer TransformBuffer {
 };
 
 layout(scalar, buffer_reference) buffer BlockBuffer {
-    uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE];
+    uint blocks[CUNK_CHUNK_MAX_HEIGHT*CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE];
 };
 
 layout(scalar, push_constant) uniform T {
@@ -41,8 +42,7 @@ layout(scalar, push_constant) uniform T {
     DebugBuffer debug2_buffer;
     TransformBuffer trans_buffer;
     BlockBuffer block_buffer;
-    ivec4 chunk; // (x, y, z) position and id as w
-    bool inChunk;
+    ivec4 chunk; // (cx, cz, id, inChunk)
 } push_constants;
 
 vec4 color_palette[14] = {
@@ -66,11 +66,16 @@ bool inRange(ivec3 m) {
     return all(greaterThanEqual(vec3(m), vec3(0))) && all(lessThan(vec2(m.xz), vec2(CUNK_CHUNK_SIZE))) && m.y < CUNK_CHUNK_MAX_HEIGHT;
 }
 
-bool isBlock(ivec3 m) {
-    return inRange(m) && push_constants.block_buffer.blocks[m.x][m.y][m.z] != 0;
+// should only be used in dda after inRange check!
+uint getBlock(ivec3 m) {
+    return push_constants.block_buffer.blocks[m.y*CUNK_HSLICE_SIZE+m.x*CUNK_CHUNK_SIZE+m.z];
 }
 
-// should only be used in dda after inRange check!
+bool isBlock(ivec3 m) {
+    return inRange(m) &&  getBlock(m) != 0;
+}
+
+
 vec4 blockColor(uint ci) {
     // ci - color palette index
     if (ci < 14) {
@@ -85,54 +90,64 @@ bool textureFrontFace(ivec3 m) {
 }
 
 void main() {
+    vec3 chunk_pos = vec3(push_constants.chunk.x * CUNK_CHUNK_SIZE, 0, push_constants.chunk.y * CUNK_CHUNK_SIZE);
+
+    // gl_FragCoord.xy is pixel (x, y) + 0.5
     vec2 screen = gl_FragCoord.xy - vec2(0.5);
 
-    ivec2 iscreen = ivec2(screen); // for debug buffer indexing only
+    // for debug buffer indexing only
+    ivec2 iscreen = ivec2(screen); 
 
-    screen = screen / vec2(200) - 1; // should be dynamic
+    // map to range [-1, 1]
+    screen = screen / vec2(200) - 1;
+
+    // as in vulkan (x, y) in [-1, 1] and z in [0, 1]
     vec4 clip_space = vec4(screen, gl_FragCoord.z, 1);
 
+    // previously in vertex shader we transform chunk bounding box from object space to clip space
+    // now we are doing the reverse
     vec4 world_space = push_constants.trans_buffer.mpp_inv * clip_space;
+
+    // dont forget to normalize homogenous to get cartesian 
     world_space /= world_space.w;
 
+    // direction from camera to fragment (in world space)
     vec4 dir_world_space = world_space - vec4(push_constants.trans_buffer.camera_pos, 0);
 
-    // if camera inside current chunk, there is no need for remapping
-    if (push_constants.inChunk) {
+    // if camera inside current chunk, take camera position as fragment position
+    if (push_constants.chunk.w == 1) {
         world_space = vec4(push_constants.trans_buffer.camera_pos, 1);
     }
 
-    // no object rotation for now
-    vec4 object_space = world_space - vec4(push_constants.chunk.xyz, 0);
+    // no object rotation for now, world space to object space is just a simple translation
+    vec4 object_space = world_space - vec4(chunk_pos, 0);
+    // while direction is not affected by translation
     vec4 dir_object_space = dir_world_space; 
 
-    // dir & pos are in object space, ready for dda
+    // dir & pos are in object space, ready for use in dda
     vec3 dir = normalize(dir_object_space.xyz);
     vec3 pos = object_space.xyz;
 
-    // clamp to [0, CUNK_CHUNK_SIZE) x [0, CUNK_CHUNK_MAX_HEIGHT) x [0, CUNK_CHUNK_SIZE)
+    // clamp pos to [0, CUNK_CHUNK_SIZE) x [0, CUNK_CHUNK_MAX_HEIGHT) x [0, CUNK_CHUNK_SIZE)
+    // pos sometime is over the border of chunk a bit due to precision error
     pos.x = clamp(pos.x, 0, CUNK_CHUNK_SIZE - EPSILON_CLAMP);
     pos.y = clamp(pos.y, 0, CUNK_CHUNK_MAX_HEIGHT - EPSILON_CLAMP);
     pos.z = clamp(pos.z, 0, CUNK_CHUNK_SIZE - EPSILON_CLAMP);
 
-    // debug saves
-    push_constants.debug_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(color, 1);
-
     ivec3 map = ivec3(pos);
+
+    // debug saves
+    // push_constants.debug_buffer.vectors[iscreen.y*400 + iscreen.x] = gl_FragCoord;
+    // push_constants.debug_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(map, 1);
+
 
     // show dir debug
     // colorOut = vec4(dir, 1.0);
     // return;
 
-    // show coverage
-    // colorOut = vec4(float(inRange(map)));
-
-    // show object space index
+    // show object space
     // colorOut = vec4(os_palette(map), 1) * float(inRange(map));
     // return;
-
-    // show front face only
-    // colorOut = vec4(float(textureFrontFace(map)));
     
     // dda
     vec3 deltaDist = abs(1 / dir);
@@ -169,16 +184,17 @@ void main() {
                 hit_object_space = object_space.xyz;
             }
 
-            vec3 hit_world_space = hit_object_space + vec3(push_constants.chunk.xyz);
+            vec3 hit_world_space = hit_object_space + vec3(chunk_pos);
 
             vec4 hit_clip = push_constants.trans_buffer.mpp * vec4(hit_world_space, 1.0);
             float hit_clip_z = hit_clip.z / hit_clip.w;
             gl_FragDepth = hit_clip_z;
             
             // mix shadow color with block color
-            // colorOut = shadow * blockColor(push_constants.block_buffer.blocks[map.x][map.y][map.z]);
-            colorOut = vec4(mask, 1);
-            push_constants.debug2_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(push_constants.chunk.xyz, 1);
+            colorOut = shadow * blockColor(getBlock(map));
+            
+            // show block faces
+            // colorOut = vec4(mask, 1);
 
             return;
         }

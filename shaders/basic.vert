@@ -24,7 +24,7 @@ layout(scalar, buffer_reference) buffer TransformBuffer {
 };
 
 layout(scalar, buffer_reference) buffer BlockBuffer {
-    uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE];
+    uint blocks[CUNK_CHUNK_MAX_HEIGHT*CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE];
 };
 
 layout(scalar, push_constant) uniform T {
@@ -33,13 +33,16 @@ layout(scalar, push_constant) uniform T {
     DebugBuffer debug2_buffer;
     TransformBuffer trans_buffer;
     BlockBuffer block_buffer;
-    ivec4 chunk; // (x, y, z) position and id as w
-    bool inChunk;
+    ivec4 chunk; // (cx, cz, id, inChunk)
 } push_constants;
 
 void main() {
-    mat4 matrix = push_constants.trans_buffer.mpp;
-    vec3 vertex = push_constants.vertex_buffer.vertices[gl_VertexIndex];
-    gl_Position = matrix * vec4(vertex + push_constants.chunk.xyz, 1.0);
+    vec3 chunk_pos = vec3(push_constants.chunk.x * CUNK_CHUNK_SIZE, 0, push_constants.chunk.y * CUNK_CHUNK_SIZE);
+
+    // object space
+    vec3 vertex_pos = push_constants.vertex_buffer.vertices[gl_VertexIndex];
+
+    gl_Position =  push_constants.trans_buffer.mpp * vec4(vertex_pos + chunk_pos, 1.0);
+
     color = push_constants.vertex_buffer.vertexColors[gl_VertexIndex];
 }

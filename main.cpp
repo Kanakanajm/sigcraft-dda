@@ -12,6 +12,8 @@
 #include "chunk_mesh.h"
 #include "world.h"
 
+#define CUNK_HSLICE_SIZE CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE
+
 using namespace nasl;
 
 struct Tri {
@@ -97,7 +99,6 @@ struct {
     VkDeviceAddress trans_buffer;
     VkDeviceAddress block_buffer;
     ivec4 chunk;
-    bool inChunk;
 } push_constants;
 
 struct GPUChunk {
@@ -334,7 +335,7 @@ int main(int argc, char **argv) {
                     } 
                     else {
                         // upload chunk
-                        uint blocks[CUNK_CHUNK_SIZE][CUNK_CHUNK_MAX_HEIGHT][CUNK_CHUNK_SIZE] = {};
+                        uint blocks[CUNK_CHUNK_MAX_HEIGHT*CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE] = {};
                         for (size_t s = 0; s < CUNK_CHUNK_SECTIONS_COUNT; s++) {
                             if (!world_chunk->data.sections[s]) {
                                 continue;
@@ -345,7 +346,7 @@ int main(int argc, char **argv) {
                             for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
                                 BlockData b = world_chunk->data.sections[s]->block_data[y][z][x];
                                 if (b != BlockAir) {
-                                    blocks[x][s * CUNK_CHUNK_SIZE + y][z] = b;
+                                    blocks[(s * CUNK_CHUNK_SIZE + y)*CUNK_HSLICE_SIZE+x*CUNK_CHUNK_SIZE+z] = b;
                                 }
                             }
                         }
@@ -468,24 +469,20 @@ int main(int argc, char **argv) {
                                     pipeline->pipeline());
                     
 
-
+                    int chunk_id = 1;
                     context.frame().withRenderTargets(
                         cmdbuf, {&image}, &*depthBuffer, [&]() {
                             for (auto chunk : chunks) {
                                 if (!chunk.second.chunk_buffer) {
                                     continue;
                                 }
-                                // chunk position in world space
-                                ivec3 pc = {
-                                    chunk.second.location[0] * CUNK_CHUNK_SIZE, 0,
-                                    chunk.second.location[1] * CUNK_CHUNK_SIZE };
 
-                                push_constants.chunk = ivec4(pc, 0);
                                 push_constants.block_buffer = chunk.second.chunk_buffer->device_address();
-                                push_constants.inChunk = in_any_chunk && chunk.first == current_chunk_key;
-                                // push_constants.inChunk = camera.position.x >= pc.x && camera.position.x < pc.x + CUNK_CHUNK_SIZE &&
-                                //     camera.position.y >= pc.y && camera.position.y < pc.y + CUNK_CHUNK_MAX_HEIGHT &&
-                                //     camera.position.z >= pc.z && camera.position.z < pc.z + CUNK_CHUNK_SIZE;
+                                push_constants.chunk = ivec4(
+                                    chunk.second.location[0],
+                                    chunk.second.location[1],
+                                    chunk_id++,
+                                    int(in_any_chunk && chunk.first == current_chunk_key));
 
                                 vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                 VK_SHADER_STAGE_VERTEX_BIT |
@@ -494,26 +491,6 @@ int main(int argc, char **argv) {
                                                 &push_constants);
                                 vkCmdDraw(cmdbuf, 12 * 3, 1, 0, 0);
                             }
-                        //     if (in_any_chunk && chunks[current_chunk_key].chunk_buffer) {
-                        //     // chunk position in world space
-                        //         ivec3 pc = {
-                        //             chunks[current_chunk_key].location[0] * CUNK_CHUNK_SIZE, 0,
-                        //             chunks[current_chunk_key].location[1] * CUNK_CHUNK_SIZE };
-
-                        //         push_constants.chunk = ivec4(pc, 0);
-                        //         push_constants.block_buffer = chunks[current_chunk_key].chunk_buffer->device_address();
-                        //         push_constants.inChunk = true;
-                        //         // push_constants.inChunk = camera.position.x >= pc.x && camera.position.x < pc.x + CUNK_CHUNK_SIZE &&
-                        //         //     camera.position.y >= pc.y && camera.position.y < pc.y + CUNK_CHUNK_MAX_HEIGHT &&
-                        //         //     camera.position.z >= pc.z && camera.position.z < pc.z + CUNK_CHUNK_SIZE;
-
-                        //         vkCmdPushConstants(cmdbuf, pipeline->layout(),
-                        //                         VK_SHADER_STAGE_VERTEX_BIT |
-                        //                             VK_SHADER_STAGE_FRAGMENT_BIT,
-                        //                         0, sizeof(push_constants),
-                        //                         &push_constants);
-                        //         vkCmdDraw(cmdbuf, 12 * 3, 1, 0, 0);
-                        //     }
                         });
 
                     auto now = imr_get_time_nano();
