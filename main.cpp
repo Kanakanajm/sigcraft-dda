@@ -376,7 +376,7 @@ int main(int argc, char **argv) {
         int current_cz = camera.position.z / CUNK_CHUNK_SIZE - int(std::signbit(camera.position.z));
         Ivec2Key current_chunk_key = Ivec2Key(current_cx, current_cz);
 
-        updateDebugGlfwWindowTitle(window, fps_counter.average_fps(), ivec2(current_cx, current_cz));
+        updateDebugGlfwWindowTitle(window, ivec2(current_cx, current_cz), fps_counter.average_fps());
         bool in_any_chunk = chunks.find(current_chunk_key) != chunks.end() && camera.position.y >= 0 && camera.position.y < CUNK_CHUNK_MAX_HEIGHT;
 
             swapchain.renderFrameSimplified(

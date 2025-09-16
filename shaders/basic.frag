@@ -174,6 +174,10 @@ void main() {
     bvec3 mask = bvec3(color);
     
     for (int i = 0; i < MAX_STEP; i++) {
+        if (!inRange(map)) {
+            discard;
+            return;
+        }
         // if hit block
         if (isBlock(map)) {
             float shadow;
