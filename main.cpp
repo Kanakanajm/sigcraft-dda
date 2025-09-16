@@ -12,7 +12,12 @@
 #include "chunk_mesh.h"
 #include "world.h"
 
-#define CUNK_HSLICE_SIZE CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE
+#define CUNK_HSLICE_SIZE (CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE)
+#define CUNK_SIZE (CUNK_HSLICE_SIZE*CUNK_CHUNK_MAX_HEIGHT)
+
+#define RADIUS 1
+#define GRID_SIZE (2*RADIUS + 1)
+#define NUM_CHUNKS (GRID_SIZE*GRID_SIZE)
 
 using namespace nasl;
 
@@ -99,11 +104,12 @@ struct {
     VkDeviceAddress trans_buffer;
     VkDeviceAddress block_buffer;
     ivec4 chunk;
+    ivec2 offset;
 } push_constants;
 
 struct GPUChunk {
     ivec2 location;
-    std::shared_ptr<imr::Buffer> chunk_buffer;
+    bool loaded = false;
 };
 
 struct Ivec2Key {
@@ -211,9 +217,9 @@ std::string print_vec3(const vec3 &v) {
     return std::format("({:.2f}, {:.2f}, {:.2f})", v[0], v[1], v[2]);
 }
 
-void updateDebugGlfwWindowTitle(GLFWwindow *window, const ivec2& chunk_pos) {
+void updateDebugGlfwWindowTitle(GLFWwindow *window, const ivec2& chunk_pos, int fps) {
     glfwSetWindowTitle(window,
-                       std::format("{}, {}", chunk_pos[0], chunk_pos[1])
+                       std::format("{}, ({}, {})", fps, chunk_pos[0], chunk_pos[1])
                            .c_str());
 }
 
@@ -231,10 +237,6 @@ int main(int argc, char **argv) {
                                   int action, int mods) {
         if (key == GLFW_KEY_R && (mods & GLFW_MOD_CONTROL))
             reload_shaders = true;
-        // if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
-        //     radius++;
-        // if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
-        //     radius--;
     });
 
     imr::Context context;
@@ -247,10 +249,6 @@ int main(int argc, char **argv) {
 
     auto world = World(argv[1]);
 
-    // pre-load all chunks around chunk_pos (no dynamic load)
-    int radius = 1;
-    int grid_size = 2*radius + 1;
-    int num_chunks = grid_size*grid_size;
 
     ivec2 center_chunk_pos = ivec2(0, 0);
     
@@ -303,11 +301,18 @@ int main(int argc, char **argv) {
 
     // key/id = x*grid_size + z
     std::unordered_map<Ivec2Key, GPUChunk> chunks = {};
-    chunks.reserve(num_chunks);
+    chunks.reserve(NUM_CHUNKS);
     std::vector<ivec2> chunks_to_load = { 
         ivec2(2, 2),
         ivec2(2, 1),
     };
+
+    // stores block data for the whole map!
+    std::shared_ptr<imr::Buffer> block_data_buffer = std::make_shared<imr::Buffer>(
+        device, 4 * CUNK_SIZE * NUM_CHUNKS,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+    push_constants.block_buffer = block_data_buffer->device_address();
 
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
@@ -315,18 +320,23 @@ int main(int argc, char **argv) {
         camera_move_freelook(&camera, &camera_input, &camera_state, delta);
 
         transform_matrices.camera_pos = camera.position;
+
+        int offset_x = center_chunk_pos.x - RADIUS;
+        int offset_y = center_chunk_pos.y - RADIUS;
+        
+        push_constants.offset = ivec2(offset_x, offset_y);
         
         // load chunks
-        for (int dx = center_chunk_pos.x - radius; dx <= center_chunk_pos.x + radius; dx++)
-        for (int dy = center_chunk_pos.y - radius; dy <= center_chunk_pos.y + radius; dy++) 
+        for (int dx = center_chunk_pos.x - RADIUS; dx <= center_chunk_pos.x + RADIUS; dx++)
+        for (int dy = center_chunk_pos.y - RADIUS; dy <= center_chunk_pos.y + RADIUS; dy++) 
         // for (ivec2 chunk_pos: chunks_to_load)
         {
             Ivec2Key chunk_pos = Ivec2Key(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
             if (chunks.find(chunk_pos) == chunks.end()) {
-                chunks[chunk_pos] = { ivec2(chunk_pos.x, chunk_pos.y), nullptr };
+                chunks[chunk_pos] = { .location = ivec2(chunk_pos.x, chunk_pos.y) };
             } 
 
-            if (!chunks[chunk_pos].chunk_buffer) {
+            if (!chunks[chunk_pos].loaded) {
                 // chunk id found but blocks not uploaded to buffer
                 auto world_chunk = world.get_loaded_chunk(chunk_pos.x, chunk_pos.y);
                 if (!world_chunk) {
@@ -340,25 +350,24 @@ int main(int argc, char **argv) {
                             if (!world_chunk->data.sections[s]) {
                                 continue;
                             }
-                        
-                            for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
                             for (size_t y = 0; y < CUNK_CHUNK_SIZE; y++)
+                            for (size_t x = 0; x < CUNK_CHUNK_SIZE; x++)
                             for (size_t z = 0; z < CUNK_CHUNK_SIZE; z++) {
                                 BlockData b = world_chunk->data.sections[s]->block_data[y][z][x];
                                 if (b != BlockAir) {
-                                    blocks[(s * CUNK_CHUNK_SIZE + y)*CUNK_HSLICE_SIZE+x*CUNK_CHUNK_SIZE+z] = b;
+                                    blocks[(s * CUNK_CHUNK_SIZE + y)*CUNK_HSLICE_SIZE+z*CUNK_CHUNK_SIZE+x] = b;
                                 }
                             }
                         }
                     
-                        std::shared_ptr<imr::Buffer> chunk_buffer = std::make_shared<imr::Buffer>(
-                            device, sizeof(blocks),
-                            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                        int chunk_index_x = chunk_pos.x - offset_x;
+                        int chunk_index_y = chunk_pos.y - offset_y;
+                        assert(chunk_index_x >= 0 && chunk_index_y >= 0);
+                        assert(chunk_index_x < GRID_SIZE && chunk_index_y < GRID_SIZE);
                         
-                        chunk_buffer->uploadDataSync(0, chunk_buffer->size, blocks);
-                        chunks[chunk_pos].chunk_buffer = chunk_buffer;
+                        block_data_buffer->uploadDataSync((chunk_index_x * GRID_SIZE + chunk_index_y) * 4 * CUNK_SIZE, 4*CUNK_SIZE, blocks);
                         std::cout << std::format("Chunk at ({}, {}) uploaded\n", chunk_pos.x, chunk_pos.y);
+                        chunks[chunk_pos].loaded = true;
                     }
                 }
             }
@@ -367,7 +376,7 @@ int main(int argc, char **argv) {
         int current_cz = camera.position.z / CUNK_CHUNK_SIZE - int(std::signbit(camera.position.z));
         Ivec2Key current_chunk_key = Ivec2Key(current_cx, current_cz);
 
-        updateDebugGlfwWindowTitle(window, ivec2(current_cx, current_cz));
+        updateDebugGlfwWindowTitle(window, fps_counter.average_fps(), ivec2(current_cx, current_cz));
         bool in_any_chunk = chunks.find(current_chunk_key) != chunks.end() && camera.position.y >= 0 && camera.position.y < CUNK_CHUNK_MAX_HEIGHT;
 
             swapchain.renderFrameSimplified(
@@ -473,11 +482,10 @@ int main(int argc, char **argv) {
                     context.frame().withRenderTargets(
                         cmdbuf, {&image}, &*depthBuffer, [&]() {
                             for (auto chunk : chunks) {
-                                if (!chunk.second.chunk_buffer) {
+                                if (!chunk.second.loaded) {
                                     continue;
                                 }
 
-                                push_constants.block_buffer = chunk.second.chunk_buffer->device_address();
                                 push_constants.chunk = ivec4(
                                     chunk.second.location[0],
                                     chunk.second.location[1],

@@ -4,9 +4,17 @@
 #extension GL_EXT_buffer_reference : require
 
 #define MAX_STEP 100 // visibility
+
 #define CUNK_CHUNK_SIZE 16
 #define CUNK_CHUNK_MAX_HEIGHT 384
 #define CUNK_HSLICE_SIZE CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE
+#define CUNK_SIZE CUNK_HSLICE_SIZE*CUNK_CHUNK_MAX_HEIGHT
+
+#define RADIUS 1
+#define GRID_SIZE (2*RADIUS + 1)
+#define NUM_CHUNKS (GRID_SIZE*GRID_SIZE)
+
+// fudges
 #define EPSILON 1e-3
 #define EPSILON_FACE 1e-3
 #define EPSILON_CLAMP 1e-4
@@ -33,7 +41,7 @@ layout(scalar, buffer_reference) buffer TransformBuffer {
 };
 
 layout(scalar, buffer_reference) buffer BlockBuffer {
-    uint blocks[CUNK_CHUNK_MAX_HEIGHT*CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE];
+    uint blocks[GRID_SIZE*GRID_SIZE*CUNK_CHUNK_MAX_HEIGHT*CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE];
 };
 
 layout(scalar, push_constant) uniform T {
@@ -43,6 +51,7 @@ layout(scalar, push_constant) uniform T {
     TransformBuffer trans_buffer;
     BlockBuffer block_buffer;
     ivec4 chunk; // (cx, cz, id, inChunk)
+    ivec2 offset;
 } push_constants;
 
 vec4 color_palette[14] = {
@@ -66,10 +75,15 @@ bool inRange(ivec3 m) {
     return all(greaterThanEqual(vec3(m), vec3(0))) && all(lessThan(vec2(m.xz), vec2(CUNK_CHUNK_SIZE))) && m.y < CUNK_CHUNK_MAX_HEIGHT;
 }
 
+uint getChunk() {
+    ivec2 idx = push_constants.chunk.xy - push_constants.offset;
+    return idx.x * GRID_SIZE + idx.y;
+}
+
 // should only be used in dda after inRange check!
 uint getBlock(ivec3 m) {
-    return push_constants.block_buffer.blocks[m.y*CUNK_HSLICE_SIZE+m.x*CUNK_CHUNK_SIZE+m.z];
-}
+    return push_constants.block_buffer.blocks[getChunk()*CUNK_SIZE + m.y*CUNK_HSLICE_SIZE + m.z*CUNK_CHUNK_SIZE + m.x];
+}   
 
 bool isBlock(ivec3 m) {
     return inRange(m) &&  getBlock(m) != 0;
