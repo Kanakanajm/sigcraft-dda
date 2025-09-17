@@ -11,6 +11,8 @@ if (NOT TARGET imr)
     message("IMR not found. Please set IMR_FOLDER accordingly.")
 endif ()
 
+find_package(nasl)
+
 add_subdirectory(enklume)
 
 add_executable(sigcraft main.cpp camera.cpp chunk_mesh.cpp world.cpp)

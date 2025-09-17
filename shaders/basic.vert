@@ -35,6 +35,7 @@ layout(scalar, push_constant) uniform T {
     BlockBuffer block_buffer;
     ivec4 chunk; // (cx, cz, id, inChunk)
     uint chunk_index;
+    ivec2 resolution;
 } push_constants;
 
 void main() {

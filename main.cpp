@@ -2,6 +2,7 @@
 #include <format>
 #include <iostream>
 #include <unordered_map>
+#include <thread>
 
 #include "imr/imr.h"
 #include "imr/util.h"
@@ -15,7 +16,7 @@
 #define CUNK_HSLICE_SIZE (CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE)
 #define CUNK_SIZE (CUNK_HSLICE_SIZE*CUNK_CHUNK_MAX_HEIGHT)
 
-#define RADIUS 1
+#define RADIUS 32
 #define GRID_SIZE (2*RADIUS + 1)
 #define NUM_CHUNKS (GRID_SIZE*GRID_SIZE)
 
@@ -105,10 +106,12 @@ struct {
     VkDeviceAddress block_buffer;
     ivec4 chunk;
     uint chunk_index;
+    ivec2 resolution;
 } push_constants;
 
 struct GPUChunk {
     ivec2 location;
+    int index;
     bool loaded = false;
     bool load_request = false;
 };
@@ -135,9 +138,9 @@ struct std::hash<Ivec2Key>
 
 Camera camera = {.position =
                      {
-                         0,
-                         385,
-                         0,
+                         -85,
+                         155,
+                         72,
                      },
                  .rotation = {0, M_PI_2},
                  .fov = 90};
@@ -224,10 +227,23 @@ void updateDebugGlfwWindowTitle(GLFWwindow *window, const ivec2& chunk_pos, int 
                            .c_str());
 }
 
+ivec2 getPlayerChunkPos(const Camera & camera) {
+
+    return {
+        int(camera.position[0] / CUNK_CHUNK_SIZE) - int(std::signbit(camera.position[0])),
+        int(camera.position[2] / CUNK_CHUNK_SIZE) - int(std::signbit(camera.position[2]))
+    };
+}
+
+inline int nmod(int a, int b) {
+    return (a % b + b) % b;
+}
+
 int main(int argc, char **argv) {
+    unsigned int thread = std::thread::hardware_concurrency();
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
     auto window = glfwCreateWindow(400, 400, "Example", nullptr, nullptr);
 
@@ -314,20 +330,21 @@ int main(int argc, char **argv) {
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
     push_constants.block_buffer = block_data_buffer->device_address();
-
+    ivec2 previous_chunk_pos = getPlayerChunkPos(camera);
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
         camera_update(window, &camera_input);
         camera_move_freelook(&camera, &camera_input, &camera_state, delta);
-
+        // center_chunk_pos = getPlayerChunkPos(camera);
+        
         transform_matrices.camera_pos = camera.position;
 
-        int offset_x = center_chunk_pos.x - RADIUS;
-        int offset_y = center_chunk_pos.y - RADIUS;
+        int min_cx = center_chunk_pos.x - RADIUS;
+        int min_cy = center_chunk_pos.y - RADIUS;
                 
         // load chunks
-        for (int dx = center_chunk_pos.x - RADIUS; dx <= center_chunk_pos.x + RADIUS; dx++)
-        for (int dy = center_chunk_pos.y - RADIUS; dy <= center_chunk_pos.y + RADIUS; dy++) 
+        for (int dx = min_cx; dx < min_cx + GRID_SIZE; dx++)
+        for (int dy = min_cy; dy < min_cy + GRID_SIZE; dy++) 
         // for (ivec2 chunk_pos: chunks_to_load)
         {
             Ivec2Key chunk_pos = Ivec2Key(center_chunk_pos.x + dx, center_chunk_pos.y + dy);
@@ -359,13 +376,17 @@ int main(int argc, char **argv) {
                             }
                         }
                     }
-                
-                    int chunk_index_x = chunk_pos.x - offset_x;
-                    int chunk_index_y = chunk_pos.y - offset_y;
-                    assert(chunk_index_x >= 0 && chunk_index_y >= 0);
-                    assert(chunk_index_x < GRID_SIZE && chunk_index_y < GRID_SIZE);
+
+                    int ix = nmod(chunk_pos.x,GRID_SIZE); // shift for negative pos
+                    int iz = nmod(chunk_pos.y,GRID_SIZE);
+                    int chunk_index = iz * GRID_SIZE + ix;
+                    std::cout << std::format("({}, {}) -> ({}, {}) -> {}\n", chunk_pos.x, chunk_pos.y, ix, iz, chunk_index);
+                    chunks[chunk_pos].index = chunk_index;
+
+
+                    assert(chunk_index >= 0 && chunk_index < NUM_CHUNKS);
                     
-                    block_data_buffer->uploadDataSync((chunk_index_x * GRID_SIZE + chunk_index_y) * 4 * CUNK_SIZE, 4*CUNK_SIZE, blocks);
+                    block_data_buffer->uploadDataSync(chunk_index * 4 * CUNK_SIZE, 4 * CUNK_SIZE, blocks);
                     std::cout << std::format("Chunk at ({}, {}) uploaded\n", chunk_pos.x, chunk_pos.y);
                     chunks[chunk_pos].loaded = true;
                     }
@@ -403,6 +424,8 @@ int main(int argc, char **argv) {
 
                     auto &image = context.image();
                     auto cmdbuf = context.cmdbuf();
+
+                    push_constants.resolution = ivec2(context.image().size().width, context.image().size().height);
 
                     if (!depthBuffer ||
                         depthBuffer->size().width != context.image().size().width ||
@@ -492,7 +515,7 @@ int main(int argc, char **argv) {
                                     chunk_id++,
                                     int(in_any_chunk && chunk.first == current_chunk_key));
 
-                                push_constants.chunk_index = (chunk.second.location[0] - offset_x) * GRID_SIZE + (chunk.second.location[1] - offset_y);
+                                push_constants.chunk_index = chunk.second.index;
 
                                 vkCmdPushConstants(cmdbuf, pipeline->layout(),
                                                 VK_SHADER_STAGE_VERTEX_BIT |

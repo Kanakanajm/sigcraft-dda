@@ -10,7 +10,7 @@
 #define CUNK_HSLICE_SIZE CUNK_CHUNK_SIZE*CUNK_CHUNK_SIZE
 #define CUNK_SIZE CUNK_HSLICE_SIZE*CUNK_CHUNK_MAX_HEIGHT
 
-#define RADIUS 1
+#define RADIUS 32
 #define GRID_SIZE (2*RADIUS + 1)
 #define NUM_CHUNKS (GRID_SIZE*GRID_SIZE)
 
@@ -52,6 +52,7 @@ layout(scalar, push_constant) uniform T {
     BlockBuffer block_buffer;
     ivec4 chunk; // (cx, cz, id, inChunk)
     uint chunk_index;
+    ivec2 resolution;
 } push_constants;
 
 vec4 color_palette[14] = {
@@ -108,7 +109,7 @@ void main() {
     ivec2 iscreen = ivec2(screen); 
 
     // map to range [-1, 1]
-    screen = screen / vec2(200) - 1;
+    screen = 2* screen / push_constants.resolution - 1;
 
     // as in vulkan (x, y) in [-1, 1] and z in [0, 1]
     vec4 clip_space = vec4(screen, gl_FragCoord.z, 1);
@@ -149,6 +150,9 @@ void main() {
     // push_constants.debug_buffer.vectors[iscreen.y*400 + iscreen.x] = gl_FragCoord;
     // push_constants.debug_buffer.vectors[iscreen.y*400 + iscreen.x] = vec4(map, 1);
 
+    // show faces
+    // colorOut = vec4(color, 1);
+    // return;
 
     // show dir debug
     // colorOut = vec4(dir, 1.0);
